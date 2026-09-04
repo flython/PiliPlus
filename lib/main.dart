@@ -9,6 +9,7 @@ import 'package:PiliPlus/common/widgets/scale_app.dart';
 import 'package:PiliPlus/common/widgets/scroll_behavior.dart';
 import 'package:PiliPlus/http/init.dart';
 import 'package:PiliPlus/models/common/theme/theme_color_type.dart';
+import 'package:PiliPlus/multi_window/sub_window.dart';
 import 'package:PiliPlus/plugin/pl_player/utils/fullscreen.dart';
 import 'package:PiliPlus/router/app_pages.dart';
 import 'package:PiliPlus/services/account_service.dart';
@@ -89,8 +90,12 @@ Future<void> _initAppPath() async {
   appSupportDirPath = (await getApplicationSupportDirectory()).path;
 }
 
-void main() async {
+Future<void> main(List<String> args) async {
   ScaledWidgetsFlutterBinding.ensureInitialized();
+  // desktop_multi_window 的子窗口与主窗口共用本入口，必须先于一切主 app 服务分流
+  if (PlatformUtils.isDesktop) {
+    if (await handleSubWindowLaunch(args)) return;
+  }
   MediaKit.ensureInitialized();
   await _initAppPath();
   try {

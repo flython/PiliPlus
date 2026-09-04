@@ -1,5 +1,7 @@
 import 'package:PiliPlus/common/widgets/button/icon_button.dart';
+import 'package:PiliPlus/multi_window/danmaku_forwarder.dart';
 import 'package:PiliPlus/pages/video/introduction/ugc/widgets/menu_row.dart';
+import 'package:PiliPlus/utils/platform_utils.dart';
 import 'package:PiliPlus/plugin/pl_player/controller.dart';
 import 'package:PiliPlus/plugin/pl_player/utils/danmaku_options.dart';
 import 'package:PiliPlus/utils/extension/num_ext.dart';
@@ -181,6 +183,25 @@ mixin HeaderMixin<T extends StatefulWidget> on State<T> {
                     ),
                     const SizedBox(height: 10),
                     if (!isLive) ...[
+                      if (PlatformUtils.isDesktop)
+                        Obx(
+                          () => Row(
+                            mainAxisAlignment: .spaceBetween,
+                            children: [
+                              const Text('弹幕分离窗口'),
+                              Switch(
+                                value: DanmakuForwarder.i.enabled.value,
+                                onChanged: (v) {
+                                  if (v) {
+                                    DanmakuForwarder.i.open();
+                                  } else {
+                                    DanmakuForwarder.i.close();
+                                  }
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
                       Row(
                         mainAxisAlignment: .spaceBetween,
                         children: [

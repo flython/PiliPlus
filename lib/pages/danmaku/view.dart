@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:PiliPlus/grpc/bilibili/community/service/dm/v1.pb.dart';
+import 'package:PiliPlus/multi_window/danmaku_forwarder.dart';
 import 'package:PiliPlus/pages/danmaku/controller.dart';
 import 'package:PiliPlus/pages/danmaku/danmaku_model.dart';
 import 'package:PiliPlus/plugin/pl_player/controller.dart';
@@ -20,6 +21,9 @@ class PlDanmaku extends StatefulWidget {
   final bool isFileSource;
   final Size size;
 
+  /// 视频标题取值器，供分离模式子窗口标题栏使用
+  final String? Function()? titleGetter;
+
   const PlDanmaku({
     super.key,
     required this.cid,
@@ -28,6 +32,7 @@ class PlDanmaku extends StatefulWidget {
     required this.isFullScreen,
     required this.isFileSource,
     required this.size,
+    this.titleGetter,
   });
 
   @override
@@ -63,6 +68,11 @@ class _PlDanmakuState extends State<PlDanmaku> {
     playerController
       ..addStatusLister(playerListener)
       ..addPositionListener(videoPositionListen);
+    DanmakuForwarder.i.attach(
+      playerController,
+      widget.cid,
+      titleGetter: widget.titleGetter,
+    );
   }
 
   @override
@@ -117,11 +127,19 @@ class _PlDanmakuState extends State<PlDanmaku> {
         if (e.weight < danmakuWeight) return;
         if (e.mode == 7) {
           try {
+            final contentList =
+                jsonDecode(e.content.replaceAll('\n', '\\n')) as List;
+            DanmakuForwarder.i.forwardSpecial(
+              cid: widget.cid,
+              color: e.color,
+              fontSize: e.fontsize.toDouble(),
+              content: contentList,
+            );
             _controller!.addDanmaku(
               SpecialDanmakuContentItem.fromList(
                 DmUtils.decimalToColor(e.color),
                 e.fontsize.toDouble(),
-                jsonDecode(e.content.replaceAll('\n', '\\n')),
+                contentList,
                 extra: VideoDanmaku(
                   id: e.id.toInt(),
                   mid: e.midHash,
@@ -160,6 +178,7 @@ class _PlDanmakuState extends State<PlDanmaku> {
     playerController
       ..removePositionListener(videoPositionListen)
       ..removeStatusLister(playerListener);
+    DanmakuForwarder.i.detach(widget.cid);
     _plDanmakuController.dispose();
     _controller = null;
     super.dispose();
@@ -173,13 +192,16 @@ class _PlDanmakuState extends State<PlDanmaku> {
     );
     return Obx(
       () => AnimatedOpacity(
-        opacity: playerController.enableShowDanmaku.value
-            ? playerController.danmakuOpacity.value
-            : 0,
+        // 分离模式下主弹幕层隐藏，但管线照常运行并转发子窗口
+        opacity: DanmakuForwarder.i.enabled.value ||
+                !playerController.enableShowDanmaku.value
+            ? 0
+            : playerController.danmakuOpacity.value,
         duration: const Duration(milliseconds: 100),
         child: DanmakuScreen<DanmakuExtra>(
           createdController: (e) {
-            playerController.danmakuController = _controller = e;
+            playerController.danmakuController =
+                _controller = DanmakuForwarder.i.wrap(e);
           },
           option: option,
           size: widget.size,

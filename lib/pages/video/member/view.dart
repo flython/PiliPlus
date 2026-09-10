@@ -157,9 +157,7 @@ class _HorizontalMemberPageState extends State<HorizontalMemberPage> {
   Widget _buildSortBtn() {
     return TextButton.icon(
       style: Style.buttonStyle,
-      onPressed: () => _controller
-        ..lastAid = widget.videoDetailController.aid.toString()
-        ..queryBySort(),
+      onPressed: _controller.queryBySort,
       icon: Icon(
         Icons.sort,
         size: 16,

@@ -105,7 +105,7 @@ class HorizontalMemberPageController
         next: null,
         seasonId: null,
         seriesId: null,
-        includeCursor: page == 1 ? true : null,
+        includeCursor: page == 1 && currAid != null ? true : null,
       );
 
   @override
@@ -132,6 +132,7 @@ class HorizontalMemberPageController
   void queryBySort() {
     if (isLoading) return;
     order = order == .pubdate ? .click : .pubdate;
+    currAid = null;
     onReload();
   }
 }

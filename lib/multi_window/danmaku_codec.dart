@@ -6,6 +6,11 @@ import 'package:flutter/material.dart' show Color;
 /// 子窗口 engine 不加载 PiliPlus 业务代码，只依赖 canvas_danmaku，
 /// 因此弹幕配置与弹幕条目都以 plain map 过通道。
 
+/// 子窗口的 WindowConfiguration.arguments 原文；主窗口用它从
+/// getAll 结果里识别弹幕子窗口（子窗口自身在 sub_window.dart 依据
+/// config['type'] 分流）。
+const String kDanmakuWindowArgs = '{"type":"danmaku"}';
+
 Map<String, Object?> encodeDanmakuOption(DanmakuOption o) => {
   'fontSize': o.fontSize,
   'fontWeight': o.fontWeight,

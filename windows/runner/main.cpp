@@ -4,6 +4,7 @@
 
 #include "app_links/app_links_plugin_c_api.h"
 #include "flutter_window.h"
+#include "sub_window_channel.h"
 #include "utils.h"
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
@@ -21,6 +22,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   // Initialize COM, so that it is available for use in the library and/or
   // plugins.
   ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+
+  RegisterSubWindowCloseChannel();
 
   flutter::DartProject project(L"data");
 

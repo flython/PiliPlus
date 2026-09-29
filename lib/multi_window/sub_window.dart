@@ -141,7 +141,9 @@ class _DanmakuWindowPageState extends State<_DanmakuWindowPage> {
         }
       case 'exit':
         unawaited(
-          _subWindowChannel.invokeMethod<void>('close').catchError((_) {}),
+          _subWindowChannel.invokeMethod<void>('close').catchError((e) {
+            _log('close via native channel failed: $e');
+          }),
         );
     }
     return null;

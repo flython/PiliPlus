@@ -202,6 +202,248 @@ mixin HeaderMixin<T extends StatefulWidget> on State<T> {
                             ],
                           ),
                         ),
+                      if (PlatformUtils.isDesktop)
+                        Obx(() {
+                          if (!DanmakuForwarder.i.enabled.value) {
+                            return const SizedBox.shrink();
+                          }
+                          final sub = DanmakuForwarder.i.subSettings;
+                          void apply() {
+                            DanmakuForwarder.i.applySubSettings();
+                            setState(() {});
+                          }
+
+                          Widget subSlider({
+                            required String title,
+                            required double min,
+                            required double max,
+                            int? divisions,
+                            required double value,
+                            required double resetValue,
+                            String Function(double)? label,
+                            required ValueChanged<double> onChanged,
+                          }) => Column(
+                            crossAxisAlignment: .start,
+                            children: [
+                              Row(
+                                mainAxisAlignment: .spaceBetween,
+                                children: [
+                                  // （子窗口）前缀防与主设置同名项混淆
+                                  Text('（子窗口）$title'),
+                                  resetBtn(
+                                    theme,
+                                    label?.call(resetValue) ?? resetValue,
+                                    () {
+                                      onChanged(resetValue);
+                                    },
+                                  ),
+                                ],
+                              ),
+                              Padding(
+                                padding: sliderPadding,
+                                child: Slider(
+                                  min: min,
+                                  max: max,
+                                  divisions: divisions,
+                                  value: value.clamp(min, max),
+                                  label: label?.call(value),
+                                  onChanged: onChanged,
+                                ),
+                              ),
+                            ],
+                          );
+
+                          return Column(
+                            crossAxisAlignment: .start,
+                            children: [
+                              Row(
+                                mainAxisAlignment: .spaceBetween,
+                                children: [
+                                  const Text('子窗口 · 同步主设置'),
+                                  Switch(
+                                    value: sub.syncWithMain,
+                                    onChanged: (v) {
+                                      DanmakuForwarder.i.setSyncWithMain(v);
+                                      setState(() {});
+                                    },
+                                  ),
+                                ],
+                              ),
+                              if (!sub.syncWithMain) ...[
+                                const Text('（子窗口）按类型屏蔽'),
+                                SingleChildScrollView(
+                                  scrollDirection: .horizontal,
+                                  padding: const .symmetric(vertical: 10),
+                                  child: Row(
+                                    spacing: 10,
+                                    // 彩色(6)走主窗口上屏着色管线，无法独立
+                                    children: blockTypesList
+                                        .where((e) => e.value != 6)
+                                        .map((e) {
+                                          final blocked = sub.blockTypes
+                                              .contains(e.value);
+                                          return ActionRowLineItem(
+                                            onTap: () {
+                                              blocked
+                                                  ? sub.blockTypes.remove(
+                                                      e.value,
+                                                    )
+                                                  : sub.blockTypes.add(
+                                                      e.value,
+                                                    );
+                                              apply();
+                                            },
+                                            text: e.label,
+                                            selectStatus: blocked,
+                                          );
+                                        })
+                                        .toList(),
+                                  ),
+                                ),
+                                const Text('（子窗口）其他'),
+                                SingleChildScrollView(
+                                  scrollDirection: .horizontal,
+                                  padding: const .symmetric(vertical: 10),
+                                  child: Row(
+                                    spacing: 10,
+                                    children: [
+                                      ActionRowLineItem(
+                                        selectStatus: sub.massiveMode,
+                                        onTap: () {
+                                          sub.massiveMode = !sub.massiveMode;
+                                          apply();
+                                        },
+                                        text: '海量弹幕',
+                                      ),
+                                      ActionRowLineItem(
+                                        selectStatus: sub.static2Scroll,
+                                        onTap: () {
+                                          sub.static2Scroll =
+                                              !sub.static2Scroll;
+                                          apply();
+                                        },
+                                        text: '固定转滚动',
+                                      ),
+                                      ActionRowLineItem(
+                                        selectStatus: sub.fixedV,
+                                        onTap: () {
+                                          sub.fixedV = !sub.fixedV;
+                                          apply();
+                                        },
+                                        text: '滚动弹幕固定速度',
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                subSlider(
+                                  title:
+                                      '显示区域 ${(sub.showArea * 100).toStringAsFixed(1)}%',
+                                  min: 0.1,
+                                  max: 1,
+                                  divisions: 9,
+                                  value: sub.showArea,
+                                  resetValue: 0.5,
+                                  label: (v) => '${v * 100}%',
+                                  onChanged: (val) {
+                                    sub.showArea = val.toPrecision(1);
+                                    apply();
+                                  },
+                                ),
+                                subSlider(
+                                  title:
+                                      '不透明度 ${(sub.opacity * 100).toStringAsFixed(1)}%',
+                                  min: 0,
+                                  max: 1,
+                                  divisions: 100,
+                                  value: sub.opacity,
+                                  resetValue: 1.0,
+                                  label: (v) =>
+                                      '${(v * 100).toStringAsFixed(1)}%',
+                                  onChanged: (val) {
+                                    sub.opacity = val.toPrecision(2);
+                                    apply();
+                                  },
+                                ),
+                                subSlider(
+                                  title:
+                                      '字体粗细 ${sub.fontWeight + 1}（可能无法精确调节）',
+                                  min: 0,
+                                  max: 8,
+                                  divisions: 8,
+                                  value: sub.fontWeight.toDouble(),
+                                  resetValue: 5,
+                                  label: (v) => '${v.toInt() + 1}',
+                                  onChanged: (val) {
+                                    sub.fontWeight = val.toInt();
+                                    apply();
+                                  },
+                                ),
+                                subSlider(
+                                  title: '描边粗细 ${sub.strokeWidth}',
+                                  min: 0,
+                                  max: 5,
+                                  divisions: 10,
+                                  value: sub.strokeWidth,
+                                  resetValue: 1.5,
+                                  onChanged: (val) {
+                                    sub.strokeWidth = val;
+                                    apply();
+                                  },
+                                ),
+                                subSlider(
+                                  title:
+                                      '字体大小 ${(sub.fontScale * 100).toStringAsFixed(1)}%',
+                                  min: 0.5,
+                                  max: 2.5,
+                                  divisions: 200,
+                                  value: sub.fontScale,
+                                  resetValue: 1.0,
+                                  label: (v) =>
+                                      '${(v * 100).toStringAsFixed(1)}%',
+                                  onChanged: (val) {
+                                    sub.fontScale = val.toPrecision(2);
+                                    apply();
+                                  },
+                                ),
+                                subSlider(
+                                  title: '滚动弹幕时长 ${sub.duration} 秒',
+                                  min: 1,
+                                  max: 50,
+                                  divisions: 49,
+                                  value: sub.duration,
+                                  resetValue: 7.0,
+                                  onChanged: (val) {
+                                    sub.duration = val.toPrecision(1);
+                                    apply();
+                                  },
+                                ),
+                                subSlider(
+                                  title: '静态弹幕时长 ${sub.staticDuration} 秒',
+                                  min: 1,
+                                  max: 50,
+                                  divisions: 49,
+                                  value: sub.staticDuration,
+                                  resetValue: 4.0,
+                                  onChanged: (val) {
+                                    sub.staticDuration = val.toPrecision(1);
+                                    apply();
+                                  },
+                                ),
+                                subSlider(
+                                  title: '弹幕行高 ${sub.lineHeight}',
+                                  min: 1.0,
+                                  max: 3.0,
+                                  value: sub.lineHeight,
+                                  resetValue: 1.6,
+                                  onChanged: (val) {
+                                    sub.lineHeight = val.toPrecision(1);
+                                    apply();
+                                  },
+                                ),
+                              ],
+                            ],
+                          );
+                        }),
                       Row(
                         mainAxisAlignment: .spaceBetween,
                         children: [

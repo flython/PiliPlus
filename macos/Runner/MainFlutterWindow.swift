@@ -150,6 +150,19 @@ private final class SubWindowGeometryWatcher {
   }
 }
 
+/// 装一次性 observer token 的小盒子。
+///
+/// 闭包里要把自己注册时的 token 摘掉，但 Swift 不允许闭包捕获「捕获后又被赋值」
+/// 的局部 var（Swift 6 并发检查直接判错），所以过一层引用类型。
+private final class ObserverTokenBox {
+  fileprivate var token: NSObjectProtocol?
+
+  fileprivate func remove() {
+    if let token { NotificationCenter.default.removeObserver(token) }
+    token = nil
+  }
+}
+
 class MainFlutterWindow: NSWindow {
   private func registerSubWindowChannel() {
     // desktop_multi_window 的子 engine 不注册任何插件，Dart 侧无法程序化关闭
@@ -208,13 +221,13 @@ class MainFlutterWindow: NSWindow {
             if kind == .playback {
               // 闭包强引用 viewController（进而强引用 engine），必须自己摘掉，
               // 否则 NotificationCenter 会一直留着，每开关一次播放窗口就漏一个引擎。
-              var closingToken: NSObjectProtocol?
-              closingToken = NotificationCenter.default.addObserver(
+              // token 放进盒子里再捕获：闭包捕获后又被赋值的局部 var 在 Swift 6
+              // 并发检查下是错误（这里报 warning），也拿不到"只摘一次"的语义。
+              let closingBox = ObserverTokenBox()
+              closingBox.token = NotificationCenter.default.addObserver(
                 forName: NSWindow.willCloseNotification, object: window, queue: .main
               ) { _ in
-                if let closingToken {
-                  NotificationCenter.default.removeObserver(closingToken)
-                }
+                closingBox.remove()
                 channel.invokeMethod("windowClosing", arguments: nil)
               }
             }

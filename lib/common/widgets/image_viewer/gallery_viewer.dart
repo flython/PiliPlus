@@ -513,9 +513,14 @@ class _GalleryViewerState extends State<GalleryViewer>
             // .scratch/playback-separate-window/feasibility.md §7），
             // 这时实况图退化成封面静帧：比空白好，也比抢走媒体端口好。
             if (_videoController == null) {
-              return Image(
-                image: CachedNetworkImageProvider(item.url),
+              // 注意别用 `Image(...)`：本目录的 image.dart 有一个同名类
+              // （Flutter Image 的 fork，额外要 minScale/maxScale 等 8 个
+              // 必填参数），会把 Flutter 原生的 Image 挡掉。
+              return CachedNetworkImage(
+                imageUrl: ImageUtils.thumbnailUrl(item.url, widget.quality),
                 fit: BoxFit.contain,
+                fadeInDuration: Duration.zero,
+                fadeOutDuration: Duration.zero,
               );
             }
             return Viewer(

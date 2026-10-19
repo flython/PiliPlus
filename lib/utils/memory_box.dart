@@ -142,6 +142,9 @@ class MemoryBox<E> implements Box<E> {
     _map.clear();
     for (final key in deleted) {
       _watch.add(BoxEvent(key, null, true));
+      // 必须逐条转发：只清本地镜像的话，主引擎的盘上数据还在，
+      // 下次启动快照一灌，用户就看到「清空过的搜索历史」又回来了。
+      onWrite?.call(name, key, null);
     }
     return deleted.length;
   }
@@ -170,5 +173,10 @@ class MemoryBox<E> implements Box<E> {
     _map
       ..clear()
       ..addAll(entries.map((key, value) => MapEntry(key, value as E)));
+    // 灌进来的箱里已经有 0..N 这些数字键（historyWord / video 就是这么存的），
+    // 不接着排下去的话 [add] 会从 0 开始，直接盖掉已有条目。
+    _autoIncrement = _map.keys
+        .whereType<int>()
+        .fold<int>(0, (max, key) => key >= max ? key + 1 : max);
   }
 }

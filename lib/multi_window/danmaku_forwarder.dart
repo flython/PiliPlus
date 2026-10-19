@@ -292,6 +292,11 @@ class DanmakuForwarder {
     await _teardownWindow();
   }
 
+  /// 宿主播放窗口整体关闭时拆子窗口，但**不动**「跨会话记忆」开关 ——
+  /// 下次进播放页由 attach 自动重开。不能用 [close]：那是设置面板的语义，
+  /// 会把记忆开关永久写成 false。
+  Future<void> teardown() => _teardownWindow();
+
   /// 程序主动关窗（退出播放页 / 设置面板关闭 / config 超时回收）。
   /// 先 _disable() 再发 exit：open() 的 windowsChanged 监听会把"窗口消失"
   /// 视为用户手关并清除记忆开关，主动关窗必须先短路该回调，只关窗口、

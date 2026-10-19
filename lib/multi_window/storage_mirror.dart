@@ -1,7 +1,7 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
+import 'package:flutter/services.dart';
 import 'package:hive_ce/hive.dart';
 
 import 'package:PiliPlus/utils/accounts.dart';
@@ -32,23 +32,22 @@ abstract final class StorageMirror {
 
   // ---------- 主引擎侧 ----------
 
-  /// 主引擎：注册「给快照」和「代写」两个方法。
-  static Future<void> attachMain(WindowController self) async {
-    await self.setWindowMethodHandler((call) async {
-      switch (call.method) {
-        case kStorageSnapshotMethod:
-          return _encodeAll();
-        case kStorageWriteMethod:
-          final args = (call.arguments as Map).cast<String, dynamic>();
-          await _applyWrite(
-            args['box'] as String,
-            args['bytes'] as Uint8List,
-          );
-          return null;
-        default:
-          return null;
-      }
-    });
+  /// 处理播放引擎发来的存储方法。
+  ///
+  /// 挂在主窗口自己的 method handler 上（见 `PlaybackWindow.init`）。
+  /// 这里**不能**自己调 `setWindowMethodHandler`：desktop_multi_window 的
+  /// `WindowChannel` 一个 channel 只存一个 handler，后注册的会把先注册的顶掉。
+  static Future<dynamic> onMainCall(MethodCall call) async {
+    switch (call.method) {
+      case kStorageSnapshotMethod:
+        return _encodeAll();
+      case kStorageWriteMethod:
+        final args = (call.arguments as Map).cast<String, dynamic>();
+        await _applyWrite(args['box'] as String, args['bytes'] as Uint8List);
+        return null;
+      default:
+        return null;
+    }
   }
 
   static Map<String, Uint8List> _encodeAll() {

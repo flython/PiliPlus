@@ -33,6 +33,9 @@ class PlaybackBridge {
   /// 用它挡掉重复的播放器拆除。
   bool _closing = false;
 
+  /// 播放器/弹幕子窗口是否已经拆过。见 [_stopEverything]。
+  bool _stopped = false;
+
   /// 是否已经成功打开过至少一个页面。见 [PlaybackRouteObserver]。
   bool _openedOnce = false;
 
@@ -145,8 +148,13 @@ class PlaybackBridge {
   }
 
   /// 关闭前把播放引擎独占的东西全部释放，否则 mpv 会继续出声。
+  ///
+  /// 关窗有三条入口（主引擎的 teardown、closeWindow、原生标题栏的
+  /// windowClosing），用 [_stopped] 挡掉重复拆除。
   Future<void> _stopEverything() async {
-    await DanmakuForwarder.i.close();
+    if (_stopped) return;
+    _stopped = true;
+    await DanmakuForwarder.i.teardown();
     PlPlayerController.updatePlayCount();
   }
 }

@@ -32,13 +32,16 @@ class PlaybackWindow {
   bool get isOpen => _controller != null;
 
   /// 在主引擎启动时调用一次：注册窗口关闭通知 + 存储镜像的对端方法。
+  ///
+  /// 两个 handler 必须合并成一次 `setWindowMethodHandler`：
+  /// desktop_multi_window 的 `WindowChannel` 每个 channel 只存一个 handler，
+  /// 后注册的会把先注册的顶掉。
   Future<void> init() async {
     final self = await WindowController.fromCurrentEngine();
-    await self.setWindowMethodHandler((call) async {
+    await self.setWindowMethodHandler((call) {
       if (call.method == kWindowClosedMethod) _controller = null;
-      return null;
+      return StorageMirror.onMainCall(call);
     });
-    await StorageMirror.attachMain(self);
   }
 
   /// 打开（或替换）播放窗口里的视频页。

@@ -11,6 +11,7 @@ import 'package:PiliPlus/common/widgets/image_grid/image_grid_view.dart'
 import 'package:PiliPlus/http/fav.dart';
 import 'package:PiliPlus/http/loading_state.dart';
 import 'package:PiliPlus/models/common/sponsor_block/skip_type.dart';
+import 'package:PiliPlus/multi_window/playback_window.dart';
 import 'package:PiliPlus/pages/common/slide/common_slide_page.dart';
 import 'package:PiliPlus/pages/home/controller.dart';
 import 'package:PiliPlus/pages/setting/models/model.dart';
@@ -59,6 +60,7 @@ List<SettingsModel> get extraSettings => [
         leading: Icon(Icons.picture_in_picture_alt_outlined),
         setKey: SettingBoxKey.playbackSeparateWindow,
         defaultVal: true,
+        onChanged: PlaybackWindow.onSeparateWindowChanged,
       ),
   ] else if (Platform.isAndroid)
     SwitchModel(

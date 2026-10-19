@@ -76,9 +76,34 @@ private enum SubWindowGeometry {
         frame.origin.x = visible.maxX - frame.width - margin
         frame.origin.y = visible.maxY - frame.height - margin
       case .playback:
-        // 播放窗落主屏右半边、纵向居中：典型用法是主窗口在左、边播边在左边浏览。
-        frame.origin.x = visible.midX
-        frame.origin.y = visible.midY - frame.height / 2
+        // 播放窗默认贴主窗口排：典型用法是主窗口在左、边播边在右边浏览列表。
+        // 原来固定落 visible.midX，13 寸屏（逻辑宽 1440）上会被 clamp 拉到
+        // x=440，直接盖掉主窗口 2/3 —— 用户观感是「点个视频，主窗口被压过去了」。
+        let main = NSApp.windows.first {
+          $0 !== window && $0.isVisible
+            && $0.styleMask.contains(.titled)
+            && $0.frame.width > 400 && $0.frame.height > 300
+        }
+        // 贴着主窗口时把窗口收窄到屏幕的 45%，让左右分屏真的成立
+        var width = frame.width
+        if main != nil { width = min(width, (visible.width - 3 * margin) / 2) }
+        frame.size.width = width
+
+        if let main {
+          let mf = main.frame
+          if mf.maxX + margin + width <= visible.maxX {
+            frame.origin.x = mf.maxX + margin
+          } else if mf.minX - margin - width >= visible.minX {
+            frame.origin.x = mf.minX - margin - width
+          } else {
+            // 两边都放不下（主窗口本身就快占满屏了），退回居中
+            frame.origin.x = visible.midX - width / 2
+          }
+          frame.origin.y = mf.midY - frame.height / 2
+        } else {
+          frame.origin.x = visible.midX - width / 2
+          frame.origin.y = visible.midY - frame.height / 2
+        }
       }
       window.setFrame(clamp(frame, in: visible), display: true)
     }
@@ -87,11 +112,11 @@ private enum SubWindowGeometry {
 
 /// 几何监听挂在 NSWindow 通知上，而不是 NSWindowDelegate。
 ///
-/// 原因：播放窗口需要 window_manager（置顶 / 全屏 / PiP 边界），而 window_manager
-/// 在 Dart 侧 `ensureInitialized` 时会把自己的 WindowManager 设成 window.delegate
-/// （WindowManager.swift 的 mainWindow setter），一个窗口只能有一个 delegate。
-/// 原来的 delegate 方案在播放窗口上会被 window_manager 覆盖，位置记忆直接失效。
-/// NSWindow 的 willClose/didMove/didEndLiveResize 通知不受 delegate 归属影响。
+/// 一个窗口只能有一个 delegate，而播放窗口要用 window_manager（置顶 / 全屏 /
+/// PiP 边界，window_controller.dart:257-290）；一旦谁调了
+/// `WindowManager.ensureInitialized()`，`WindowManager.swift` 的 mainWindow setter
+/// 就会把自己设成该窗口的 delegate，delegate 方案在播放窗口上随时可能失效。
+/// NSWindow 的 willClose / didMove / didEndLiveResize 通知与 delegate 归属无关。
 private final class SubWindowGeometryWatcher {
   static let shared = SubWindowGeometryWatcher()
 
@@ -181,9 +206,15 @@ class MainFlutterWindow: NSWindow {
             // 播放窗口：关窗前先通知 Dart 收尾（落播放进度等）。willClose 早于
             // 窗口真正销毁，此刻 engine 还活着。只对播放窗口发，弹幕窗口零改动。
             if kind == .playback {
-              NotificationCenter.default.addObserver(
+              // 闭包强引用 viewController（进而强引用 engine），必须自己摘掉，
+              // 否则 NotificationCenter 会一直留着，每开关一次播放窗口就漏一个引擎。
+              var closingToken: NSObjectProtocol?
+              closingToken = NotificationCenter.default.addObserver(
                 forName: NSWindow.willCloseNotification, object: window, queue: .main
               ) { _ in
+                if let closingToken {
+                  NotificationCenter.default.removeObserver(closingToken)
+                }
                 channel.invokeMethod("windowClosing", arguments: nil)
               }
             }

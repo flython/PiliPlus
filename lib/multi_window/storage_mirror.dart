@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:hive_ce/hive.dart';
 
@@ -29,6 +30,9 @@ abstract final class StorageMirror {
   static Map<String, Uint8List> _snapshot = const {};
 
   static WindowController? _main;
+
+  /// 快照是否成功取到。见 [fetchSnapshot] 与 [throwIfSnapshotMissing]。
+  static bool snapshotReady = false;
 
   // ---------- 主引擎侧 ----------
 
@@ -67,7 +71,10 @@ abstract final class StorageMirror {
 
   static Future<void> _applyWrite(String name, Uint8List bytes) async {
     final box = _findBox(name);
-    if (box == null) return;
+    if (box == null) {
+      debugPrint('[storageMirror] 收到未知箱 $name 的写转发，已丢弃');
+      return;
+    }
     final entry = decodeEntry(bytes);
     final value = entry[1];
     if (value == null) {
@@ -109,13 +116,40 @@ abstract final class StorageMirror {
         await Future.delayed(const Duration(milliseconds: 300));
       }
     }
-    _snapshot = raw == null
-        ? const {}
-        : raw.map((key, value) => MapEntry('$key', value as Uint8List));
+    // 取不到就是取不到，不能悄悄降级成「空镜像」。空镜像下
+    // Accounts.refresh() 会把三个槽位都留成 AnonymousAccount
+    // （accounts.dart:12-14），整个播放窗口变成未登录 + 全默认设置，
+    // 而且快照只取一次、没有恢复路径 —— 用户看不出任何异常，只会觉得
+    // 「播放窗口坏了」。宁可让这次点击失败回主窗口播放。
+    snapshotReady = raw != null;
+    if (!snapshotReady) {
+      debugPrint('[storageMirror] 12s 内没能从主引擎取到存储快照，播放窗口将不可用');
+    } else {
+      _snapshot = raw!.map(
+        (key, value) => MapEntry('$key', value as Uint8List),
+      );
+    }
+    if (!(_fetchDone?.isCompleted ?? true)) _fetchDone?.complete();
+  }
+
+  static Completer<void>? _fetchDone;
+
+  /// 快照取完之前，openVideo 要在这里等。
+  ///
+  /// 直接抛错会让主引擎把这次点击重试满预算（最长十几秒）才报「打不开」，
+  /// 用户全程零反馈；而真正的原因只是快照还在路上（冷启动深链直开视频时，
+  /// 主引擎自己还没跑到 `PlaybackWindow.init()`）。等它才是对的语义：
+  /// 等不到才抛，那时主引擎的预算也快耗尽了。
+  static Future<void> throwIfSnapshotMissing() async {
+    if (snapshotReady) return;
+    await _fetchDone?.future;
+    if (snapshotReady) return;
+    throw StateError('播放窗口拿不到主引擎的存储快照，本次回主窗口播放');
   }
 
   /// 建好内存箱并灌入快照。`GStorage.init()` 的播放分支调用。
   static void openBoxes() {
+    _fetchDone = Completer<void>();
     GStorage.userInfo = MemoryBox<UserInfoData>('userInfo', onWrite: _pushTo);
     GStorage.localCache = MemoryBox<dynamic>('localCache', onWrite: _pushTo);
     GStorage.setting = MemoryBox<dynamic>('setting', onWrite: _pushTo);
@@ -162,14 +196,26 @@ abstract final class StorageMirror {
 
   static void _pushTo(String box, dynamic key, Object? value) {
     final main = _main;
-    if (main == null) return;
-    unawaited(
-      main
-          .invokeMethod<void>(kStorageWriteMethod, {
-            'box': box,
-            'bytes': encodeEntry(key, value),
-          })
-          .catchError((_) {}),
-    );
+    if (main == null) {
+      debugPrint('[storageMirror] 还没拿到主引擎句柄，丢弃 $box 的写');
+      return;
+    }
+    try {
+      unawaited(
+        main
+            .invokeMethod<void>(kStorageWriteMethod, {
+              'box': box,
+              'bytes': encodeEntry(key, value),
+            })
+            // 这一步失败 = 播放引擎的这一次写入彻底丢了（设置 / 观看进度 /
+            // 登录态都在这条路上）。原来吞掉不记，用户下次启动会发现数据
+            // 凭空消失，而日志里一行都没有 —— 排查成本最高的单点。
+            .catchError(
+              (Object e) => debugPrint('[storageMirror] 写 $box 失败: $e'),
+            ),
+      );
+    } catch (e) {
+      debugPrint('[storageMirror] 编码 $box 的写入失败: $e');
+    }
   }
 }

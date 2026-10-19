@@ -30,6 +30,8 @@ import 'package:PiliPlus/common/widgets/scroll_physics.dart'
     show tabBarScrollPhysics;
 import 'package:PiliPlus/main.dart' show tmpPadding;
 import 'package:PiliPlus/models/common/image_preview_type.dart';
+import 'package:PiliPlus/multi_window/playback_window.dart';
+import 'package:PiliPlus/multi_window/window_env.dart';
 import 'package:PiliPlus/plugin/pl_player/utils/fullscreen.dart';
 import 'package:PiliPlus/utils/device_utils.dart';
 import 'package:PiliPlus/utils/extension/num_ext.dart';
@@ -115,6 +117,10 @@ class _GalleryViewerState extends State<GalleryViewer>
 
   Future<void> _initPlayer() async {
     assert(_player == null);
+    // 一个进程只能有一个媒体引擎：播放窗口开着的时候主引擎再建一个
+    // Player，会把它的 media_kit 事件循环端口抢走，表现为正在播的
+    // 窗口无声、进度条不动，且不报错。实况图此时降级成封面静帧。
+    if (WindowEnv.isMain && PlaybackWindow.i.isOpen) return;
     final player = await Player.create();
     _videoController = await VideoController.create(player);
     if (!mounted) {
@@ -501,27 +507,37 @@ class _GalleryViewerState extends State<GalleryViewer>
       case SourceType.livePhoto:
         child = Obx(
           key: _key,
-          () => _currIndex.value == index && _videoController != null
-              ? Viewer(
-                  minScale: widget.minScale,
-                  maxScale: widget.maxScale,
-                  containerSize: _containerSize,
-                  childSize: _containerSize,
-                  onDragStart: _onDragStart,
-                  onDragUpdate: _onDragUpdate,
-                  onDragEnd: _onDragEnd,
-                  doubleTapGestureRecognizer: _doubleTapGestureRecognizer,
-                  horizontalDragGestureRecognizer:
-                      _horizontalDragGestureRecognizer,
-                  onChangePage: _onChangePage,
-                  child: FittedBox(
-                    child: SimpleVideo(
-                      controller: _videoController!,
-                      fill: Colors.transparent,
-                    ),
-                  ),
-                )
-              : const SizedBox.shrink(),
+          () {
+            if (_currIndex.value != index) return const SizedBox.shrink();
+            // 播放窗口开着时主引擎不能建 Player（见
+            // .scratch/playback-separate-window/feasibility.md §7），
+            // 这时实况图退化成封面静帧：比空白好，也比抢走媒体端口好。
+            if (_videoController == null) {
+              return Image(
+                image: CachedNetworkImageProvider(item.url),
+                fit: BoxFit.contain,
+              );
+            }
+            return Viewer(
+              minScale: widget.minScale,
+              maxScale: widget.maxScale,
+              containerSize: _containerSize,
+              childSize: _containerSize,
+              onDragStart: _onDragStart,
+              onDragUpdate: _onDragUpdate,
+              onDragEnd: _onDragEnd,
+              doubleTapGestureRecognizer: _doubleTapGestureRecognizer,
+              horizontalDragGestureRecognizer:
+                  _horizontalDragGestureRecognizer,
+              onChangePage: _onChangePage,
+              child: FittedBox(
+                child: SimpleVideo(
+                  controller: _videoController!,
+                  fill: Colors.transparent,
+                ),
+              ),
+            );
+          },
         );
     }
     return Hero(tag: '${item.url}${widget.tag}', child: child);

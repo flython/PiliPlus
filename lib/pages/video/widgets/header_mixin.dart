@@ -2,6 +2,7 @@ import 'dart:io' show Platform;
 
 import 'package:PiliPlus/common/widgets/button/icon_button.dart';
 import 'package:PiliPlus/multi_window/danmaku_forwarder.dart';
+import 'package:PiliPlus/multi_window/playback_window.dart';
 import 'package:PiliPlus/multi_window/window_env.dart';
 import 'package:PiliPlus/pages/video/introduction/ugc/widgets/menu_row.dart';
 import 'package:PiliPlus/utils/platform_utils.dart';
@@ -187,18 +188,10 @@ mixin HeaderMixin<T extends StatefulWidget> on State<T> {
                     ),
                     const SizedBox(height: 10),
                     if (!isLive) ...[
-                      if (Platform.isMacOS && WindowEnv.isMain)
-                        Row(
-                          mainAxisAlignment: .spaceBetween,
-                          children: [
-                            const Text('播放页独立窗口'),
-                            Switch(
-                              value: Pref.playbackSeparateWindow,
-                              onChanged: (v) =>
-                                  Pref.playbackSeparateWindow = v,
-                            ),
-                          ],
-                        ),
+                      // 两个窗口里都渲染：开关打开时视频页就在播放窗口里，
+                      // 只在主窗口渲染等于这个入口是死的（用户只能去设置页关）。
+                      if (Platform.isMacOS)
+                        const _PlaybackSeparateSwitch(),
                       if (PlatformUtils.isDesktop)
                         Obx(
                           () => Row(
@@ -759,5 +752,41 @@ class MSliderTrackShape extends RoundedRectSliderTrackShape {
         offset.dy + (parentBox.size.height - trackHeight) / 2;
     final double trackWidth = parentBox.size.width;
     return Rect.fromLTWH(trackLeft, trackTop, trackWidth, trackHeight);
+  }
+}
+
+/// 「播放页独立窗口」开关。
+///
+/// 自己持有状态：[Pref] 只是个 Hive getter，拨动之后没有东西通知外面重建，
+/// 直接读它的话开关会一直停在旧值（DanmakuOptions 那批 static 同款问题）。
+class _PlaybackSeparateSwitch extends StatefulWidget {
+  const _PlaybackSeparateSwitch();
+
+  @override
+  State<_PlaybackSeparateSwitch> createState() =>
+      _PlaybackSeparateSwitchState();
+}
+
+class _PlaybackSeparateSwitchState extends State<_PlaybackSeparateSwitch> {
+  late bool _value = Pref.playbackSeparateWindow;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: .spaceBetween,
+      children: [
+        const Text('播放页独立窗口'),
+        Switch(
+          value: _value,
+          onChanged: (v) {
+            Pref.playbackSeparateWindow = v;
+            // 在播放窗口里关掉它时，close() 无事可做（这里就是它自己）；
+            // 在主窗口里关掉时负责把还开着的播放窗口收掉。
+            if (WindowEnv.isMain) PlaybackWindow.onSeparateWindowChanged(v);
+            setState(() => _value = v);
+          },
+        ),
+      ],
+    );
   }
 }

@@ -1,6 +1,7 @@
 import 'dart:async' show Timer;
 import 'dart:io' show Platform;
 
+import 'package:PiliPlus/multi_window/window_env.dart';
 import 'package:PiliPlus/plugin/pl_player/controller.dart';
 import 'package:PiliPlus/utils/desktop/tray_controller.dart';
 import 'package:PiliPlus/utils/device_utils.dart';
@@ -56,10 +57,10 @@ class WindowController {
       case WindowMinimizedEvent():
         break;
       case WindowMaximizedEvent():
-        windowMaximizedPref = _isMaximized = true;
+        if (WindowEnv.isMain) windowMaximizedPref = _isMaximized = true;
         break;
       case WindowRestoredEvent():
-        if (_isMaximized) {
+        if (WindowEnv.isMain && _isMaximized) {
           windowMaximizedPref = _isMaximized = false;
         }
         break;
@@ -80,6 +81,10 @@ class WindowController {
       case WindowExitedFullScreenEvent():
         break;
       case WindowCloseRequestedEvent():
+        // 播放窗口也跑这套监听器，但它只是众多窗口之一：cancel 会让红点
+        // 点不动，onClose() 更是 GStorage.compact/close + 退出整个 app
+        // ——点播放窗口的关闭键会把整个应用带走。
+        if (!WindowEnv.isMain) break;
         event.request.cancel();
         if (TrayController.instance.showTrayIcon && minimizeOnExit) {
           _hide();
@@ -100,6 +105,9 @@ class WindowController {
     if (PlPlayerController.instance?.updatePipBounds(window) ?? false) {
       return;
     }
+    // 播放窗口的位置/尺寸由 SubWindowGeometry 自己记到 UserDefaults，
+    // 这里的 Hive key 是**主窗口**专用，写进去会互相覆盖。
+    if (!WindowEnv.isMain) return;
     final position = window.position;
     _setting.put(SettingBoxKey.windowPosition, [position.x, position.y]);
   }
@@ -110,6 +118,7 @@ class WindowController {
     if (PlPlayerController.instance?.updatePipBounds(window) ?? false) {
       return;
     }
+    if (!WindowEnv.isMain) return;
     final bounds = window.bounds;
     _setting.putAll({
       SettingBoxKey.windowSize: [bounds.width, bounds.height],

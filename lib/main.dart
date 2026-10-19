@@ -24,6 +24,7 @@ import 'package:PiliPlus/services/service_locator.dart';
 import 'package:PiliPlus/utils/cache_manager.dart';
 import 'package:PiliPlus/utils/date_utils.dart';
 import 'package:PiliPlus/utils/desktop/calc_window_position.dart';
+import 'package:PiliPlus/utils/desktop/window_controller.dart';
 import 'package:PiliPlus/utils/device_utils.dart';
 import 'package:PiliPlus/utils/extension/core_palettes_ext.dart';
 import 'package:PiliPlus/utils/extension/theme_ext.dart';
@@ -43,6 +44,7 @@ import 'package:catcher_2/catcher_2.dart';
 import 'package:collection/collection.dart';
 import 'package:dynamic_color/dynamic_color.dart' show DynamicColorPlugin;
 import 'package:flutter/foundation.dart';
+import 'package:nativeapi/nativeapi.dart' as nativeapi;
 import 'package:flutter/services.dart';
 import 'package:flutter_displaymode/flutter_displaymode.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -117,7 +119,7 @@ Future<void> main(List<String> args) async {
     _initDownPath(),
     _initTmpPath(),
     // 播放引擎与主引擎同进程，同一个 cache 目录两个实例会互相踩
-    if (WindowEnv.isMain) CacheManager.ensureInitialized(),
+    CacheManager.ensureInitialized(),
     ?FontUtils.init(),
   ]);
   Get
@@ -212,27 +214,48 @@ Future<void> main(List<String> args) async {
     runApp(const MyApp());
   }
 
-  if (WindowEnv.isMain && PlatformUtils.isDesktop) {
-    await PlaybackWindow.i.init();
+  if (PlatformUtils.isDesktop) {
+    if (WindowEnv.isMain) {
+      await PlaybackWindow.i.init();
 
-    final window = WindowManager.instance.getCurrent();
-    if (window != null) {
-      window
-        ..titleBarStyle = Pref.showWindowTitleBar ? .normal : .hidden
-        ..isWindowControlButtonsVisible = true
-        ..bounds = calcWindowBounds()
-        ..minimumSize = DeviceUtils.desktopMinSize
-        ..isVisibleInTaskbar = true
-        ..title = Constants.appName;
-      if (Pref.isWindowMaximized) window.maximize();
-      void show([_]) => window
-        ..focus()
-        ..show();
-      switch (WidgetsBinding.instance.schedulerPhase) {
-        case .idle || .postFrameCallbacks:
-          WidgetsBinding.instance.scheduleFrameCallback(show);
-        case .transientCallbacks || .midFrameMicrotasks || .persistentCallbacks:
-          WidgetsBinding.instance.addPostFrameCallback(show);
+      final window = WindowManager.instance.getCurrent();
+      if (window != null) {
+        window
+          ..titleBarStyle = Pref.showWindowTitleBar ? .normal : .hidden
+          ..isWindowControlButtonsVisible = true
+          ..bounds = calcWindowBounds()
+          ..minimumSize = DeviceUtils.desktopMinSize
+          ..isVisibleInTaskbar = true
+          ..title = Constants.appName;
+        if (Pref.isWindowMaximized) window.maximize();
+        void show([_]) => window
+          ..focus()
+          ..show();
+        switch (WidgetsBinding.instance.schedulerPhase) {
+          case .idle || .postFrameCallbacks:
+            WidgetsBinding.instance.scheduleFrameCallback(show);
+          case .transientCallbacks || .midFrameMicrotasks ||
+                .persistentCallbacks:
+            WidgetsBinding.instance.addPostFrameCallback(show);
+        }
+      }
+    } else {
+      // 播放窗口也要绑自己的 NSWindow：置顶、桌面全屏、桌面小窗播放全都走
+      // WindowController.instance.window（pl_player/controller.dart:257-290、
+      // utils/fullscreen.dart:11-23），没有它这些按钮全是死的。
+      // window_manager 的 getCurrent() 是按 engine 绑自己那个 NSWindow 的。
+      // window_controller.dart 里所有会写主窗口偏好、或者会
+      // compact/close Hive 再退出 app 的分支都加了 WindowEnv.isMain 守卫。
+      WindowController.instance.init();
+      final window = WindowManager.instance.getCurrent();
+      if (window != null) {
+        window
+          ..titleBarStyle = Pref.showWindowTitleBar ? .normal : .hidden
+          ..isWindowControlButtonsVisible = true
+          // 默认建出来是 1000x620 且没有下限，桌面左右分栏拖窄之后
+          // 播放器控件区会被压扁
+          ..minimumSize = const nativeapi.Size(width: 480, height: 360)
+          ..title = Constants.appName;
       }
     }
   }
@@ -364,10 +387,14 @@ class MyApp extends StatelessWidget {
       );
     }
     if (PlatformUtils.isDesktop) {
-      return BackDetector(
+      child = BackDetector(
         onBack: _onBack,
         child: child,
       );
+    }
+    if (WindowEnv.isPlayback) {
+      // 播放窗口需要一个可见的返回入口，桌面端视频页本身没有
+      child = Stack(children: [child, const PlaybackBackButton()]);
     }
     return child;
   }

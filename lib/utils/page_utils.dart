@@ -35,7 +35,7 @@ import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:PiliPlus/utils/url_utils.dart';
 import 'package:PiliPlus/utils/utils.dart';
 import 'package:collection/collection.dart';
-import 'package:flutter/foundation.dart' show kDebugMode;
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
@@ -517,6 +517,22 @@ abstract final class PageUtils {
     );
   }
 
+  /// 播放窗口里路由表的三个「重资源」页：每开一个都会建一个 mpv 实例。
+  static const _mediaRoutes = {'/videoV', '/liveRoom', '/audio'};
+
+  /// 在**播放窗口内**打开媒体页（视频 / 直播 / 音频）。
+  ///
+  /// 栈顶已经是媒体页就原地替换，否则压一层。替换而不是一律 push：
+  /// 连点十个视频不能叠十层播放器；但从 UP 页、番剧页点进来的视频必须
+  /// 留得住上一页 —— 那两个页面不是媒体页，按替换处理就回不去了。
+  static void toPlaybackMediaNamed(String route, dynamic arguments) {
+    if (_mediaRoutes.contains(Get.currentRoute)) {
+      Get.offNamed<void>(route, arguments: arguments);
+    } else {
+      Get.toNamed<void>(route, arguments: arguments);
+    }
+  }
+
   static void toLiveRoom(
     int? roomId, {
     bool off = false,
@@ -525,24 +541,22 @@ abstract final class PageUtils {
       return;
     }
     if (WindowEnv.isPlayback) {
-      Get.offOrToNamed(
-        '/liveRoom',
-        arguments: roomId,
-        off: off,
-        preventDuplicates: off,
-      );
+      // off: true 是「退出直播」（live_room/view.dart:647），必须原样替换掉；
+      // 否则按「栈顶是不是媒体页」判断，见 toPlaybackMediaNamed。
+      if (off) {
+        Get.offNamed('/liveRoom', arguments: roomId);
+      } else {
+        toPlaybackMediaNamed('/liveRoom', roomId);
+      }
       return;
     }
     if (Pref.playbackSeparateWindow) {
-      // 直播和视频共用同一个媒体引擎，只能去播放窗口开
-      PlaybackWindow.i.openRoute('/liveRoom', roomId, off: off).catchError((_) {
-        Get.offOrToNamed(
-          '/liveRoom',
-          arguments: roomId,
-          off: off,
-          preventDuplicates: off,
-        );
-      });
+      // 主窗口只发消息，不自己建 Player：
+      // media_kit 的事件循环端口是进程级 static，两个 engine 同时建 Player
+      // 会互相顶掉（.scratch/playback-separate-window/feasibility.md §7）
+      PlaybackWindow.i
+          .openRoute('/liveRoom', roomId, off: off)
+          .catchError(onPlaybackWindowFailed);
       return;
     }
     Get.offOrToNamed(
@@ -589,23 +603,29 @@ abstract final class PageUtils {
       ...?extraArguments,
     };
     if (WindowEnv.isPlayback) {
-      // 播放窗口内：原地替换，不叠第二层播放页
-      return Get.offNamed(
-        '/videoV',
-        arguments: arguments,
-        preventDuplicates: false,
-      );
+      // 播放窗口内：栈顶是媒体页就原地替换，从 UP/番剧页进来则压一层
+      toPlaybackMediaNamed('/videoV', arguments);
+      return null;
     }
     if (Pref.playbackSeparateWindow) {
       // 主窗口只发消息，不自己建 Player：
       // media_kit 的事件循环端口是进程级 static，两个 engine 同时建 Player
       // 会互相顶掉（.scratch/playback-separate-window/feasibility.md §7）
-      return PlaybackWindow.i.open(arguments, off: off).catchError((_) {
-        // 播放窗口起不来时回退到主窗口内打开，别让点击无声消失
-        PageUtils.toDupNamed('/videoV', arguments: arguments, off: off);
-      });
+      return PlaybackWindow.i
+          .open(arguments, off: off)
+          .catchError(onPlaybackWindowFailed);
     }
     return PageUtils.toDupNamed('/videoV', arguments: arguments, off: off);
+  }
+
+  /// 播放窗口打不开时的统一提示。
+  ///
+  /// 这里**绝对不能**回退到「在主窗口内打开」：那会让主引擎也建一个
+  /// `Player`，后建的会抢走 media_kit 进程级事件循环端口，表现是正在播的
+  /// 播放窗口无声、进度条不动，而且一行日志都没有。
+  static Future<void> onPlaybackWindowFailed([Object? e]) async {
+    debugPrint('播放窗口打不开: $e');
+    SmartDialog.showToast('播放窗口打不开，请稍后再试');
   }
 
   static final _pgcRegex = RegExp(r'(ep|ss)(\d+)');

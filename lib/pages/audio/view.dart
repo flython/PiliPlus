@@ -16,6 +16,8 @@ import 'package:PiliPlus/common/widgets/selection_text.dart';
 import 'package:PiliPlus/grpc/bilibili/app/listener/v1.pb.dart';
 import 'package:PiliPlus/models/common/image_preview_type.dart';
 import 'package:PiliPlus/models/common/image_type.dart';
+import 'package:PiliPlus/multi_window/playback_window.dart';
+import 'package:PiliPlus/multi_window/window_env.dart';
 import 'package:PiliPlus/pages/audio/controller.dart';
 import 'package:PiliPlus/pages/audio/volume_button.dart';
 import 'package:PiliPlus/pages/setting/models/play_settings.dart'
@@ -37,6 +39,7 @@ import 'package:PiliPlus/utils/page_utils.dart';
 import 'package:PiliPlus/utils/platform_utils.dart';
 import 'package:PiliPlus/utils/storage.dart';
 import 'package:PiliPlus/utils/storage_key.dart';
+import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:PiliPlus/utils/utils.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
@@ -60,9 +63,8 @@ class AudioPage extends StatefulWidget {
     Duration? start,
     String? audioUrl,
     int? extraId,
-  }) => Get.toNamed(
-    '/audio',
-    arguments: {
+  }) {
+    final arguments = {
       'id': ?id,
       'oid': oid,
       'subId': ?subId,
@@ -72,8 +74,23 @@ class AudioPage extends StatefulWidget {
       'start': ?start,
       'audioUrl': ?audioUrl,
       'extraId': ?extraId,
-    },
-  );
+    };
+    if (WindowEnv.isPlayback) {
+      // 播放窗口内：栈顶是媒体页就原地替换，从歌单/UP 页进来则压一层
+      PageUtils.toPlaybackMediaNamed('/audio', arguments);
+      return;
+    }
+    if (Pref.playbackSeparateWindow) {
+      // 音频和视频/直播共用唯一的媒体引擎，理由同 PageUtils.toVideoPage：
+      // 主引擎再建一个 Player 会抢走播放窗口的 media_kit 事件循环端口。
+      // 用 off 让播放窗口只保留这一个媒体页。
+      PlaybackWindow.i
+          .openRoute('/audio', arguments, off: true)
+          .catchError(PageUtils.onPlaybackWindowFailed);
+      return;
+    }
+    Get.toNamed('/audio', arguments: arguments);
+  }
 }
 
 extension _ListOrderExt on ListOrder {

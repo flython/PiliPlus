@@ -39,7 +39,13 @@ class PlaybackWindow {
   Future<void> init() async {
     final self = await WindowController.fromCurrentEngine();
     await self.setWindowMethodHandler((call) {
-      if (call.method == kWindowClosedMethod) _controller = null;
+      if (call.method == kWindowClosedMethod) {
+        _controller = null;
+        // 同 [close]：用户点红点走的就是这条通路，必须一样自增 generation，
+        // 否则正在重试的派发会对着已销毁的窗口空转满 12 秒，然后被
+        // page_utils 当成「开不了窗」回退到主窗口再开一次。
+        _generation++;
+      }
       return StorageMirror.onMainCall(call);
     });
   }
@@ -66,14 +72,27 @@ class PlaybackWindow {
           off: off,
           generation: _generation,
         );
+        // 已经存在的窗口同样要置前 + 聚焦。播放窗口是另一个 NSWindow，
+        // 不 orderFront 它就停在原层序 —— 用户在主窗口点第二个视频时
+        // 主窗口纹丝不动，看起来像没点上。
+        await existing.show();
+        return;
+      } on _WindowClosed {
         return;
       } catch (_) {
-        // 窗口可能刚被关掉：丢弃句柄重建
-        _controller = null;
+        // 窗口可能刚被关掉。必须连窗一起拆：只把句柄丢掉的话，屏幕上会留一个
+        // 主引擎再也关不掉的孤儿播放窗口，而下一次点视频会开出第二个。
+        if (identical(_controller, existing)) _controller = null;
+        await _destroyQuietly(existing);
       }
     }
 
-    final controller = await _ensureWindow();
+    late final WindowController controller;
+    try {
+      controller = await _ensureWindow();
+    } on _WindowClosed {
+      return;
+    }
     try {
       await _dispatch(
         controller,
@@ -82,6 +101,8 @@ class PlaybackWindow {
         off: off,
         generation: _generation,
       );
+    } on _WindowClosed {
+      return;
     } catch (_) {
       _controller = null;
       await _destroyQuietly(controller);
@@ -107,11 +128,13 @@ class PlaybackWindow {
         hiddenAtLaunch: true,
       ),
     );
-    _controller = controller;
     if (generation != _generation) {
-      // 建窗期间用户把窗口关了：别留下一个没人管的孤儿窗
+      // 建窗途中用户把窗口关了：把它销毁掉，而且**不能**把这个将死的
+      // 句柄返回给调用方 —— 调用方会拿它空转满 40 次重试才放弃。
       unawaited(_destroyQuietly(controller));
+      throw const _WindowClosed();
     }
+    _controller = controller;
     return controller;
   }
 
@@ -124,31 +147,46 @@ class PlaybackWindow {
     required bool off,
     required int generation,
   }) async {
-    for (var i = 0; i < 40; i++) {
+    for (var i = 0; i < 20; i++) {
       if (generation != _generation) {
-        throw StateError('播放窗口已关闭');
+        throw const _WindowClosed();
       }
       try {
-        await controller.invokeMethod<void>(kOpenVideoMethod, {
-          'route': route,
-          'arguments': arguments,
-          'off': off,
-        });
+        await controller.invokeMethod<void>(
+          kOpenVideoMethod,
+          {'route': route, 'arguments': arguments, 'off': off},
+        );
         return;
-      } catch (_) {
-        await Future.delayed(const Duration(milliseconds: 300));
+      } catch (e) {
+        if (i == _kDispatchAttempts - 1) {
+          debugPrint('播放窗口派发失败: $e');
+          throw StateError('播放窗口启动超时：$e');
+        }
+        await Future.delayed(const Duration(milliseconds: 200));
       }
     }
     throw StateError('播放窗口启动超时');
+  }
+
+  /// 「播放页独立窗口」开关被拨动时的收尾（设置页与播放页头部共用）。
+  ///
+  /// 关掉开关时必须把已经开着的播放窗口收掉。留着它的话主窗口会按新条件
+  /// 自己开视频页、自己建 `Player`（`PageUtils.toVideoPage` /
+  /// `toLiveRoom` 的分流条件都读这个开关），两个 engine 抢 media_kit 那个
+  /// 进程级事件循环端口，正在播的窗口表现是无声 + 进度条不动 + 一行日志都没有。
+  static void onSeparateWindowChanged(bool value) {
+    if (!value) unawaited(i.close());
   }
 
   /// 关闭播放窗口：先让播放引擎拆弹幕子窗口（`kTeardownMethod` 内部会做），
   /// 再关原生窗——引擎随之释放。
   Future<void> close() async {
     final controller = _controller;
-    if (controller == null) return;
     _controller = null;
+    // 无条件自增：窗口经常是被用户/播放引擎先关掉的，那时 `_controller`
+    // 已经是 null 而 `_generation` 没动，正在重试的派发就断不了。
     _generation++;
+    if (controller == null) return;
     await _destroyQuietly(controller);
   }
 
@@ -156,12 +194,38 @@ class PlaybackWindow {
     try {
       await controller
           .invokeMethod<void>(kTeardownMethod)
-          .timeout(const Duration(seconds: 2));
+          .timeout(_kCloseTimeout);
+    } catch (e) {
+      debugPrint('播放窗口收尾失败: $e');
+    }
+    // 收尾失败也**必须**把原生窗关掉。放在一起顺序 await 的话，
+    // teardown 超时会让 close 永远不执行：mpv 继续出声，而主引擎已经
+    // 把句柄置空了，下一次点视频会开出第二个播放窗口。
+    try {
       await controller
           .invokeMethod<void>('close')
-          .timeout(const Duration(seconds: 2));
+          .timeout(_kCloseTimeout);
     } catch (e) {
       debugPrint('关闭播放窗口失败: $e');
     }
   }
+
+  static const _kCloseTimeout = Duration(seconds: 2);
+
+  /// 派发重试预算 ≈4s。这个等待原本是 12s，但真正需要等的只有「子引擎把
+  /// window handler 注册上」——那发生在 bootstrap 最开头（init() 里第一件事）。
+  /// 剩下的等待（存储快照）已经改成在播放引擎内部 await，不再占用这里的预算。
+  /// 用户在这段时间里既没有 spinner 也没有任何提示，拖得越久越像是点了没反应。
+  static const _kDispatchAttempts = 20;
+}
+
+/// 播放窗口在派发途中被关掉了 —— 用户点红点，或播放引擎自己退了。
+///
+/// 跟「打不开这个页面」是两回事：用户是主动关的，回退到主窗口再弹一个
+/// 视频页违背意图，所以 [PlaybackWindow.openRoute] 会把它就地吃掉。
+class _WindowClosed implements Exception {
+  const _WindowClosed();
+
+  @override
+  String toString() => '播放窗口已关闭';
 }

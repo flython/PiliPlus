@@ -260,7 +260,26 @@ abstract final class StorageMirror {
   /// 由播放窗口的 `WindowFocusedEvent` 触发（`WindowController.onWindowFocus`）。
   static Future<void> refresh() async {
     final main = _main;
-    if (main == null || !snapshotReady) return;
+    if (main == null || !snapshotReady || _refreshing) return;
+    // 焦点事件很密（点标题栏、开原生弹窗都会来一次），而一次 refresh 要把
+    // 所有箱编码过通道再解码回来。限流，否则光是来回切两个窗口就能把主引擎
+    // 的 IPC 打满。
+    final now = DateTime.now();
+    if (now.difference(_lastRefresh) < _kRefreshInterval) return;
+    _lastRefresh = now;
+    _refreshing = true;
+    try {
+      await _refreshInner(main);
+    } finally {
+      _refreshing = false;
+    }
+  }
+
+  static const _kRefreshInterval = Duration(seconds: 3);
+  static DateTime _lastRefresh = DateTime.fromMillisecondsSinceEpoch(0);
+  static bool _refreshing = false;
+
+  static Future<void> _refreshInner(WindowController main) async {
     Map<dynamic, dynamic>? raw;
     for (var i = 0; i < 3; i++) {
       try {

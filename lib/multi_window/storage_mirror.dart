@@ -270,6 +270,10 @@ abstract final class StorageMirror {
     _refreshing = true;
     try {
       await _refreshInner(main);
+    } catch (e) {
+      // 这个回调的返回值被 WindowController 丢弃（字段类型是 void Function()），
+      // 抛出去就是一条没人接的未处理异步异常。补拉失败不值得拖垮播放窗口。
+      debugPrint('[storageMirror] 补拉快照失败: $e');
     } finally {
       _refreshing = false;
     }

@@ -52,6 +52,14 @@ List<SettingsModel> get extraSettings => [
       leading: const Icon(Icons.storage),
       onTap: _showDownPathDialog,
     ),
+    if (Platform.isMacOS)
+      const SwitchModel(
+        title: '播放页独立窗口',
+        subtitle: '视频在单独的窗口播放，可以在主窗口继续浏览列表',
+        leading: Icon(Icons.picture_in_picture_alt_outlined),
+        setKey: SettingBoxKey.playbackSeparateWindow,
+        defaultVal: true,
+      ),
   ] else if (Platform.isAndroid)
     SwitchModel(
       title: '允许三方APP访问私有存储',

@@ -13,6 +13,8 @@ import 'package:PiliPlus/models/common/video/video_type.dart';
 import 'package:PiliPlus/models/dynamics/result.dart';
 import 'package:PiliPlus/models_new/pgc/pgc_info_model/episode.dart';
 import 'package:PiliPlus/models_new/video/video_detail/dimension.dart';
+import 'package:PiliPlus/multi_window/playback_window.dart';
+import 'package:PiliPlus/multi_window/window_env.dart';
 import 'package:PiliPlus/pages/common/common_intro_controller.dart';
 import 'package:PiliPlus/pages/common/publish/publish_route.dart';
 import 'package:PiliPlus/pages/contact/view.dart';
@@ -522,6 +524,27 @@ abstract final class PageUtils {
     if (roomId == null) {
       return;
     }
+    if (WindowEnv.isPlayback) {
+      Get.offOrToNamed(
+        '/liveRoom',
+        arguments: roomId,
+        off: off,
+        preventDuplicates: off,
+      );
+      return;
+    }
+    if (Pref.playbackSeparateWindow) {
+      // 直播和视频共用同一个媒体引擎，只能去播放窗口开
+      PlaybackWindow.i.openRoute('/liveRoom', roomId, off: off).catchError((_) {
+        Get.offOrToNamed(
+          '/liveRoom',
+          arguments: roomId,
+          off: off,
+          preventDuplicates: off,
+        );
+      });
+      return;
+    }
     Get.offOrToNamed(
       '/liveRoom',
       arguments: roomId,
@@ -565,6 +588,23 @@ abstract final class PageUtils {
       secondRpIdKey: ?secondRpId,
       ...?extraArguments,
     };
+    if (WindowEnv.isPlayback) {
+      // 播放窗口内：原地替换，不叠第二层播放页
+      return Get.offNamed(
+        '/videoV',
+        arguments: arguments,
+        preventDuplicates: false,
+      );
+    }
+    if (Pref.playbackSeparateWindow) {
+      // 主窗口只发消息，不自己建 Player：
+      // media_kit 的事件循环端口是进程级 static，两个 engine 同时建 Player
+      // 会互相顶掉（.scratch/playback-separate-window/feasibility.md §7）
+      return PlaybackWindow.i.open(arguments, off: off).catchError((_) {
+        // 播放窗口起不来时回退到主窗口内打开，别让点击无声消失
+        PageUtils.toDupNamed('/videoV', arguments: arguments, off: off);
+      });
+    }
     return PageUtils.toDupNamed('/videoV', arguments: arguments, off: off);
   }
 

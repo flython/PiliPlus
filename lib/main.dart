@@ -9,7 +9,12 @@ import 'package:PiliPlus/common/widgets/scale_app.dart';
 import 'package:PiliPlus/common/widgets/scroll_behavior.dart';
 import 'package:PiliPlus/http/init.dart';
 import 'package:PiliPlus/models/common/theme/theme_color_type.dart';
+import 'package:PiliPlus/multi_window/playback_bridge.dart';
+import 'package:PiliPlus/multi_window/playback_window.dart';
 import 'package:PiliPlus/multi_window/sub_window.dart';
+import 'package:PiliPlus/multi_window/window_env.dart';
+import 'package:PiliPlus/pages/download/download/controller.dart';
+import 'package:PiliPlus/pages/playback/view.dart';
 import 'package:PiliPlus/plugin/pl_player/utils/fullscreen.dart';
 import 'package:PiliPlus/router/app_pages.dart';
 import 'package:PiliPlus/services/account_service.dart';
@@ -111,12 +116,16 @@ Future<void> main(List<String> args) async {
   await Future.wait([
     _initDownPath(),
     _initTmpPath(),
-    CacheManager.ensureInitialized(),
+    // 播放引擎与主引擎同进程，同一个 cache 目录两个实例会互相踩
+    if (WindowEnv.isMain) CacheManager.ensureInitialized(),
     ?FontUtils.init(),
   ]);
   Get
     ..lazyPut(AccountService.new)
-    ..lazyPut(DownloadService.new);
+    ..lazyPut(DownloadService.new)
+    // 播放页的本地视频入口（introduction/local/controller.dart）会直接
+    // Get.find，播放窗口不会先经过下载页，所以必须在 bootstrap 兜住
+    ..lazyPut(DownloadController.new);
   HttpOverrides.global = _CustomHttpOverrides();
 
   if (PlatformUtils.isMobile) {
@@ -189,7 +198,9 @@ Future<void> main(List<String> args) async {
       'MPV Api Version':
           '${NativePlayer.apiVersion >> 16}.${NativePlayer.apiVersion & 0xFFFF}',
     };
-    final fileHandler = await JsonFileHandler.init();
+    // 播放引擎与主引擎同进程，写同一个 .pili_logs.json 会交错，
+    // 所以只有主引擎拿文件 handler
+    final fileHandler = WindowEnv.isMain ? await JsonFileHandler.init() : null;
 
     Catcher2(
       [?fileHandler, const ConsoleHandler()],
@@ -201,7 +212,9 @@ Future<void> main(List<String> args) async {
     runApp(const MyApp());
   }
 
-  if (PlatformUtils.isDesktop) {
+  if (WindowEnv.isMain && PlatformUtils.isDesktop) {
+    await PlaybackWindow.i.init();
+
     final window = WindowManager.instance.getCurrent();
     if (window != null) {
       window
@@ -301,7 +314,8 @@ class MyApp extends StatelessWidget {
       locale: const Locale("zh", "CN"),
       fallbackLocale: const Locale("zh", "CN"),
       supportedLocales: const [Locale("zh", "CN"), Locale("en", "US")],
-      initialRoute: '/',
+      // 播放窗口不渲染底部 Tab（MainApp 在 '/' 路由里），栈底是哨兵页
+      initialRoute: WindowEnv.isPlayback ? PlaybackRootPage.routeName : '/',
       getPages: Routes.getPages,
       defaultTransition: Pref.pageTransition,
       builder: FlutterSmartDialog.init(
@@ -315,6 +329,7 @@ class MyApp extends StatelessWidget {
       navigatorObservers: [
         routeObserver,
         FlutterSmartDialog.observer,
+        if (WindowEnv.isPlayback) PlaybackRouteObserver(),
       ],
       scrollBehavior: PlatformUtils.isDesktop
           ? const CustomScrollBehavior()

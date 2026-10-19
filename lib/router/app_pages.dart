@@ -34,6 +34,7 @@ import 'package:PiliPlus/pages/main_reply/view.dart';
 import 'package:PiliPlus/pages/match_info/view.dart';
 import 'package:PiliPlus/pages/member/view.dart';
 import 'package:PiliPlus/pages/member_dynamics/view.dart';
+import 'package:PiliPlus/pages/playback/view.dart';
 import 'package:PiliPlus/pages/member_guard/view.dart';
 import 'package:PiliPlus/pages/member_profile/view.dart';
 import 'package:PiliPlus/pages/member_search/view.dart';
@@ -79,6 +80,11 @@ class Routes {
     GetPage(name: '/hot', page: () => const HotPage()),
     // 视频详情
     GetPage(name: '/videoV', page: () => const VideoDetailPageV()),
+    // 播放窗口栈底哨兵页（见 pages/playback/view.dart）
+    GetPage(
+      name: PlaybackRootPage.routeName,
+      page: () => const PlaybackRootPage(),
+    ),
     //
     GetPage(name: '/webview', page: () => const WebviewPage()),
     // 设置

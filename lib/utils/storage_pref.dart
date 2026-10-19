@@ -726,6 +726,19 @@ abstract final class Pref {
   static bool get danmakuSeparateWindow =>
       _setting.get(SettingBoxKey.danmakuSeparateWindow, defaultValue: false);
 
+  /// 播放页是否独立成第二个窗口。
+  ///
+  /// 目前只有 macOS 走这条路径（其它平台的子引擎初始化差异没验证过），
+  /// macOS 上默认开，与需求一致。
+  static bool get playbackSeparateWindow => Platform.isMacOS &&
+      _setting.get(
+        SettingBoxKey.playbackSeparateWindow,
+        defaultValue: true,
+      );
+
+  static set playbackSeparateWindow(bool value) =>
+      _setting.put(SettingBoxKey.playbackSeparateWindow, value);
+
   static bool get enableQuickFav =>
       _setting.get(SettingBoxKey.enableQuickFav, defaultValue: false);
 

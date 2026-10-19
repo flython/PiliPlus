@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:PiliPlus/models/model_owner.dart';
+import 'package:PiliPlus/multi_window/storage_mirror.dart';
+import 'package:PiliPlus/multi_window/window_env.dart';
 import 'package:PiliPlus/models/user/danmaku_rule_adapter.dart';
 import 'package:PiliPlus/models/user/info.dart';
 import 'package:PiliPlus/utils/accounts.dart';
@@ -25,8 +27,16 @@ abstract final class GStorage {
   static late final Box<Uint8List>? reply;
 
   static Future<void> init() async {
-    Hive.init(path.join(appSupportDirPath, 'hive'));
     regAdapter();
+
+    if (WindowEnv.isPlayback) {
+      // 播放引擎不碰磁盘：一个箱文件只能有一个 owner，否则 hive_ce 会数据损坏。
+      // 见 multi_window/storage_mirror.dart
+      StorageMirror.openBoxes();
+      return;
+    }
+
+    Hive.init(path.join(appSupportDirPath, 'hive'));
 
     await Future.wait([
       // 登录用户信息

@@ -1,11 +1,15 @@
+import 'dart:io' show Platform;
+
 import 'package:PiliPlus/common/widgets/button/icon_button.dart';
 import 'package:PiliPlus/multi_window/danmaku_forwarder.dart';
+import 'package:PiliPlus/multi_window/window_env.dart';
 import 'package:PiliPlus/pages/video/introduction/ugc/widgets/menu_row.dart';
 import 'package:PiliPlus/utils/platform_utils.dart';
 import 'package:PiliPlus/plugin/pl_player/controller.dart';
 import 'package:PiliPlus/plugin/pl_player/utils/danmaku_options.dart';
 import 'package:PiliPlus/utils/extension/num_ext.dart';
 import 'package:PiliPlus/utils/page_utils.dart';
+import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:PiliPlus/utils/theme_utils.dart';
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
@@ -183,6 +187,18 @@ mixin HeaderMixin<T extends StatefulWidget> on State<T> {
                     ),
                     const SizedBox(height: 10),
                     if (!isLive) ...[
+                      if (Platform.isMacOS && WindowEnv.isMain)
+                        Row(
+                          mainAxisAlignment: .spaceBetween,
+                          children: [
+                            const Text('播放页独立窗口'),
+                            Switch(
+                              value: Pref.playbackSeparateWindow,
+                              onChanged: (v) =>
+                                  Pref.playbackSeparateWindow = v,
+                            ),
+                          ],
+                        ),
                       if (PlatformUtils.isDesktop)
                         Obx(
                           () => Row(

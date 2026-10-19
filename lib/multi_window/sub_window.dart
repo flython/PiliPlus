@@ -1,34 +1,45 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show Platform;
 
 import 'package:PiliPlus/multi_window/danmaku_codec.dart';
+import 'package:PiliPlus/multi_window/playback_bridge.dart';
+import 'package:PiliPlus/multi_window/window_env.dart';
 import 'package:canvas_danmaku/canvas_danmaku.dart';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-/// 弹幕分离子窗口（.scratch/danmaku-separate-window）。
+/// 子窗口分流（.scratch/danmaku-separate-window、.scratch/playback-separate-window）。
 ///
 /// desktop_multi_window 的子窗口是独立 Flutter engine，与主窗口共用同一
 /// main 入口，由 [handleSubWindowLaunch] 依据原生传入的
-/// `['multi_window', windowId, arguments]` 参数分流；子窗口内不执行主 app
-/// 的 GetX/Hive/托盘/网络栈初始化。
+/// `['multi_window', windowId, arguments]` 参数分流。
 ///
-/// 已知限制：子 engine 不运行插件注册（GeneratedPluginRegistrant），除
-/// desktop_multi_window 自身 channel 外任何插件（含 window_manager）均不可用；
-/// 窗口标题/位置暂由原生默认值决定，定制需求见工单 04。
-
+/// 两类子窗口的能力完全不同：
+///  * **弹幕窗口**：纯展示，不跑插件注册，不碰 Hive/网络/路由。子 engine 默认
+///    没有注册任何 GeneratedPluginRegistrant，除 desktop_multi_window 自身
+///    channel 外任何插件（含 window_manager）均不可用。
+///  * **播放窗口**：跑的是完整 app —— 完整 GetX 路由表、完整插件、完整网络栈，
+///    只是 Hive 换成内存镜像、initialRoute 换成哨兵页。主窗口永不建 `Player`
+///    （media_kit 的事件循环端口是进程级 static，见 feasibility.md §7）。
+///
+/// 两者都由 `MainFlutterWindow.swift` 的 `onWindowCreatedCallback` 注册
+/// `PiliPlus/subwindow` 通道：弹幕窗口只有 `close`，播放窗口另有
+/// `setupWindow` / `enablePlugins`。
 const _kDanmakuWindowType = 'danmaku';
 
-/// 原生在 AppDelegate 的 onWindowCreatedCallback 中为子 engine 注册的
-/// 极简通道，目前仅支持 `close`（performClose，同用户点关闭按钮）。
+/// 原生在 `onWindowCreatedCallback` 中为子 engine 注册的通道。
 const _subWindowChannel = MethodChannel('PiliPlus/subwindow');
 
 void _log(String message) {
-  debugPrint('[danmaku-subwindow] $message');
+  debugPrint('[subwindow] $message');
 }
 
-/// 在 main() 早期调用：当前 engine 是子窗口则运行子窗口应用并返回 true。
+/// 在 main() 早期调用：当前 engine 是子窗口则返回 true。
+///
+/// 弹幕窗口在这里 `runApp` 并返回 true；播放窗口只做窗口/插件/快照的准备，
+/// 然后返回 false 让 `main()` 继续跑完整 bootstrap。
 Future<bool> handleSubWindowLaunch(List<String> args) async {
   if (args.length < 3 || args[0] != 'multi_window') return false;
   final windowId = args[1];
@@ -43,14 +54,36 @@ Future<bool> handleSubWindowLaunch(List<String> args) async {
 
   switch (config['type']) {
     case _kDanmakuWindowType:
+      WindowEnv.kind = WindowKind.danmaku;
       _log('danmaku sub engine launched, windowId=$windowId');
+      // 几何/标题由原生按窗口类型装，弹幕窗口和播放窗口走同一条路。
+      // 只在 macOS 上要：Windows 的通道只实现了 close。
+      // 装不上也不能拖垮弹幕渲染，吞掉即可。
+      if (Platform.isMacOS) {
+        try {
+          await _subWindowChannel.invokeMethod<void>('setupWindow', {
+            'type': _kDanmakuWindowType,
+          });
+        } catch (e) {
+          _log('setupWindow failed: $e');
+        }
+      }
       runApp(
         _DanmakuWindowApp(controller: WindowController.fromWindowId(windowId)),
       );
+      return true;
+    case kPlaybackWindowType:
+      WindowEnv.kind = WindowKind.playback;
+      _log('playback engine launched, windowId=$windowId');
+      await PlaybackBridge.i.init(
+        config['main'] as String,
+        kPlaybackWindowType,
+      );
+      return false;
     default:
       runApp(const _SubWindowErrorPage(reason: '未知的子窗口类型'));
+      return true;
   }
-  return true;
 }
 
 /// 弹幕分离窗口：纯展示，渲染主窗口转发的弹幕。

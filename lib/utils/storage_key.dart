@@ -216,7 +216,8 @@ abstract final class SettingBoxKey {
       danmakuStrokeWidth = 'strokeWidth',
       danmakuFontWeight = 'fontWeight',
       danmakuSeparateWindow = 'danmakuSeparateWindow',
-      danmakuSubWindowSettings = 'danmakuSubWindowSettings';
+      danmakuSubWindowSettings = 'danmakuSubWindowSettings',
+      playbackSeparateWindow = 'playbackSeparateWindow';
 
   static const String systemProxyHost = 'systemProxyHost',
       systemProxyPort = 'systemProxyPort';

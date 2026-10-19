@@ -35,9 +35,9 @@ class _PlaybackRootPageState extends State<PlaybackRootPage> {
 /// 为什么需要它：桌面端视频页没有 AppBar（`VideoDetailPageV.build` 里
 /// `removeAppBar` 为真时直接给 null），移动端那个带返回键的
 /// `_buildOverlayToolBar` 在桌面又不渲染。于是播放窗口里只剩两条退路 ——
-/// 不可发现的 Esc，和标题栏关闭键（后者等于放弃播放）。用户在播放窗口里
-/// 打开 UP 页、番剧页之后，按钮上的「返回主页」直接 `Get.until(isFirst)`，
-/// 回到哨兵页就把整个窗口关了，压根回不到上一层的 UP 页。
+/// 不可发现的 Esc，和标题栏关闭键（后者等于放弃播放）。视频页头部那个
+/// 「返回主页」是 `Get.until(isFirst)`，回到哨兵页就把整个窗口关了，
+/// 压根回不到上一层打开的 UP 页。
 ///
 /// 显隐由 [PlaybackBridge.routeTick] 驱动：栈里只剩哨兵页时
 /// （也就是视频页返回、窗口即将关闭的那一刻）淡出。

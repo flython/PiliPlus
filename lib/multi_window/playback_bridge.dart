@@ -195,8 +195,9 @@ class PlaybackRouteObserver extends NavigatorObserver {
     // `_openedOnce` 挡掉程序自己把哨兵页 off 掉的那一次：那走的是
     // pushReplacement → didReplace，本来就不会到这里，纯属兜底。
     //
-    // previousRoute 为 null 是 offNamed 打开首屏的情况（栈变成 ['/videoV']），
-    // 只判哨兵页名会漏掉它，用户返回后停在一个空窗口里。
+    // 哨兵页是 initialRoute、永远在栈底，所以栈底的名字判据成立；
+    // `previousRoute == null` 那支留作防御（GetX 的 offNamed 走
+    // pushReplacementNamed，只替换栈顶，不会把栈清空）。
     if (PlaybackBridge.i.openedOnce &&
         (previousRoute == null ||
             previousRoute.settings.name == PlaybackRootPage.routeName)) {

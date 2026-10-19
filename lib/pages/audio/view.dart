@@ -39,7 +39,6 @@ import 'package:PiliPlus/utils/page_utils.dart';
 import 'package:PiliPlus/utils/platform_utils.dart';
 import 'package:PiliPlus/utils/storage.dart';
 import 'package:PiliPlus/utils/storage_key.dart';
-import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:PiliPlus/utils/utils.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
@@ -80,7 +79,7 @@ class AudioPage extends StatefulWidget {
       PageUtils.toPlaybackMediaNamed('/audio', arguments);
       return;
     }
-    if (Pref.playbackSeparateWindow) {
+    if (PlaybackWindow.i.useSeparateWindow) {
       // 音频和视频/直播共用唯一的媒体引擎，理由同 PageUtils.toVideoPage：
       // 主引擎再建一个 Player 会抢走播放窗口的 media_kit 事件循环端口。
       // 用 off 让播放窗口只保留这一个媒体页。

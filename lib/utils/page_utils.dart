@@ -555,7 +555,7 @@ abstract final class PageUtils {
       }
       return;
     }
-    if (Pref.playbackSeparateWindow) {
+    if (PlaybackWindow.i.useSeparateWindow) {
       // 主窗口只发消息，不自己建 Player：
       // media_kit 的事件循环端口是进程级 static，两个 engine 同时建 Player
       // 会互相顶掉（.scratch/playback-separate-window/feasibility.md §7）
@@ -612,7 +612,7 @@ abstract final class PageUtils {
       toPlaybackMediaNamed('/videoV', arguments);
       return null;
     }
-    if (Pref.playbackSeparateWindow) {
+    if (PlaybackWindow.i.useSeparateWindow) {
       // 主窗口只发消息，不自己建 Player：
       // media_kit 的事件循环端口是进程级 static，两个 engine 同时建 Player
       // 会互相顶掉（.scratch/playback-separate-window/feasibility.md §7）

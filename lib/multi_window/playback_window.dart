@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:math' show min;
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/foundation.dart';
 
 import 'package:PiliPlus/multi_window/storage_mirror.dart';
 import 'package:PiliPlus/multi_window/window_env.dart';
+import 'package:PiliPlus/utils/storage_pref.dart';
 
 /// 主引擎 → 播放引擎
 const kOpenVideoMethod = 'openVideo';
@@ -30,6 +32,23 @@ class PlaybackWindow {
   int _generation = 0;
 
   bool get isOpen => _controller != null;
+
+  /// 主引擎决定「这个视频要不要送播放窗口」的判据。
+  ///
+  /// 关键是 `|| isOpen` 那一半：只要播放窗口还开着，视频就**必须**继续走它，
+  /// 不管开关是什么状态。一个进程只能有一个 media_kit `Player`（事件循环
+  /// 端口是 C 侧的进程级 static），主引擎这时自己再建一个，正在播的窗口就
+  /// 变成无声 + 进度条不动 + 一行日志都没有。
+  ///
+  /// 少了这一半会出现一个很难查的场景：用户在**播放窗口里**把开关关掉
+  /// （页头部那个开关，两个窗口都渲染），播放窗口照常播放，关窗逻辑却在
+  /// 播放引擎里是空操作，而开关的写会立刻经 `_applyWrite` 落到主引擎的真实
+  /// Hive —— 于是主引擎从此开始建第二个 `Player`。
+  ///
+  /// 开关关掉后想收回播放窗口，去主窗口「设置 → 桌面」拨，那里才会调
+  /// [onSeparateWindowChanged] 真正关窗。
+  bool get useSeparateWindow =>
+      Pref.playbackSeparateWindow || isOpen;
 
   /// 在主引擎启动时调用一次：注册窗口关闭通知 + 存储镜像的对端方法。
   ///
@@ -78,14 +97,18 @@ class PlaybackWindow {
           generation: _generation,
         );
       } on _WindowClosed {
+        // 用户自己把窗口关了：本来就该停在这儿，不回退、不报错
         return;
       } catch (_) {
         // 窗口可能刚被关掉。必须连窗一起拆：只把句柄丢掉的话，屏幕上会留一个
         // 主引擎再也关不掉的孤儿播放窗口，而下一次点视频会开出第二个。
+        //
+        // 拆完要 rethrow：派发失败 ≠ 用户关窗。吞掉的话调用方以为成功，
+        // 既不回退主窗口也不弹提示，用户点的那个视频就凭空没了。
         if (identical(_controller, existing)) _controller = null;
         await _destroyQuietly(existing);
+        rethrow;
       }
-      if (_controller != existing) return;
       await _showSafely(existing);
       return;
     }
@@ -170,9 +193,20 @@ class PlaybackWindow {
     required bool off,
     required int generation,
   }) async {
-    for (var i = 0; i < _kDispatchAttempts; i++) {
+    // 卡**总**预算，不是「次数 × 单次上界」。对端正常回包是毫秒级的，
+    // 次数只在它快速报错时才有意义（子 engine 的 method channel 是建窗后
+    // 才注册的，头几次必然 CHANNEL_UNREGISTERED）；而对端不回包时，
+    // 单次 5s 的 timeout 会把 20 次重试放大成 ≈100s 的「点了没反应」。
+    final budget = Stopwatch()..start();
+    Object? last;
+    while (true) {
       if (generation != _generation) {
         throw const _WindowClosed();
+      }
+      final remaining = _kDispatchBudget.inMilliseconds - budget.elapsedMilliseconds;
+      if (remaining <= 0) {
+        debugPrint('播放窗口派发超时: $last');
+        throw StateError('播放窗口启动超时');
       }
       try {
         await controller
@@ -180,25 +214,29 @@ class PlaybackWindow {
               kOpenVideoMethod,
               {'route': route, 'arguments': arguments, 'off': off},
             )
-            .timeout(_kDispatchTimeout);
+            .timeout(
+              Duration(
+                milliseconds: min(
+                  remaining,
+                  _kCallTimeout.inMilliseconds,
+                ),
+              ),
+            );
         return;
       } catch (e) {
-        if (i == _kDispatchAttempts - 1) {
-          debugPrint('播放窗口派发失败: $e');
-          throw StateError('播放窗口启动超时：$e');
-        }
+        last = e;
         await Future.delayed(const Duration(milliseconds: 200));
       }
     }
-    throw StateError('播放窗口启动超时');
   }
 
   /// 「播放页独立窗口」开关被拨动时的收尾（设置页与播放页头部共用）。
   ///
-  /// 关掉开关时必须把已经开着的播放窗口收掉。留着它的话主窗口会按新条件
-  /// 自己开视频页、自己建 `Player`（`PageUtils.toVideoPage` /
-  /// `toLiveRoom` 的分流条件都读这个开关），两个 engine 抢 media_kit 那个
-  /// 进程级事件循环端口，正在播的窗口表现是无声 + 进度条不动 + 一行日志都没有。
+  /// 关掉开关时必须把已经开着的播放窗口收掉。留着它的话主窗口会自己开视频页、
+  /// 自己建 `Player`（`PageUtils.toVideoPage` 的分流条件是
+  /// 「开关开着**或者**播放窗口已经开着」，见 `page_utils.dart`），
+  /// 两个 engine 抢 media_kit 那个进程级事件循环端口，正在播的窗口表现是
+  /// 无声 + 进度条不动 + 一行日志都没有。
   static void onSeparateWindowChanged(bool value) {
     if (!value) unawaited(i.close());
   }
@@ -235,15 +273,16 @@ class PlaybackWindow {
 
   static const _kCloseTimeout = Duration(seconds: 2);
 
-  /// 派发重试预算 ≈4s。这个等待原本是 12s，但真正需要等的只有「子引擎把
-  /// window handler 注册上」——那发生在 bootstrap 最开头（init() 里第一件事）。
-  /// 剩下的等待（存储快照）已经改成在播放引擎内部 await，不再占用这里的预算。
+  /// 派发重试的**总**预算。子 engine 的 method channel 是建窗之后才注册的，
+  /// 头几次必然 CHANNEL_UNREGISTERED，所以要重试；对端一旦就位就回包，耗时
+  /// 是毫秒级的。剩下的等待（存储快照、首帧）都在播放引擎内部 await。
   /// 用户在这段时间里既没有 spinner 也没有任何提示，拖得越久越像是点了没反应。
-  static const _kDispatchAttempts = 20;
+  static const _kDispatchBudget = Duration(seconds: 10);
 
   /// 单次派发往返的上限。对端要等 `markAppReady()`（首帧 post-frame）才回包，
   /// 冷启动深链时可能超过两秒；再久就当它卡死了，重试下一轮。
-  static const _kDispatchTimeout = Duration(seconds: 5);
+  /// 真正封顶的是 [_kDispatchBudget]，不是「次数 × 这个」。
+  static const _kCallTimeout = Duration(seconds: 3);
 }
 
 /// 播放窗口在派发途中被关掉了 —— 用户点红点，或播放引擎自己退了。

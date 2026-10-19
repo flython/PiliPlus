@@ -119,7 +119,10 @@ Future<void> main(List<String> args) async {
   await Future.wait([
     _initDownPath(),
     _initTmpPath(),
-    // 播放引擎与主引擎同进程，同一个 cache 目录两个实例会互相踩
+    // 播放引擎也要初始化：否则播放窗口里进度条缩略图是空白，
+    // image_utils.dart 那几处直接抛 LateInitializationError。
+    // CacheManager.manager 是 isolate 级的 static，每个引擎各有一份，
+    // 但共用同一个 tmp 目录。
     CacheManager.ensureInitialized(),
     ?FontUtils.init(),
   ]);

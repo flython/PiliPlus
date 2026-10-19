@@ -105,6 +105,13 @@ abstract final class StorageMirror {
   /// 所以按 `PlaybackWindow._dispatch` 同款策略重试到成功为止。
   static Future<void> fetchSnapshot(WindowController main) async {
     _main = main;
+    // 这里必须也能建：fetchSnapshot 由 PlaybackBridge.init() 触发，
+    // 早于 GStorage.init() 里的 openBoxes()。只在 openBoxes 里建的话，
+    // fetchSnapshot 末尾的 complete() 看到的是 null（死代码），
+    // 随后 openBoxes 造出一个再也没人 complete 的 Completer ——
+    // throwIfSnapshotMissing 就会永久挂起，主引擎那次点击要卡到
+    // 自己重试满预算才报错。
+    _fetchDone ??= Completer<void>();
     Map<dynamic, dynamic>? raw;
     for (var i = 0; i < 40; i++) {
       try {
@@ -149,7 +156,7 @@ abstract final class StorageMirror {
 
   /// 建好内存箱并灌入快照。`GStorage.init()` 的播放分支调用。
   static void openBoxes() {
-    _fetchDone = Completer<void>();
+    _fetchDone ??= Completer<void>();
     GStorage.userInfo = MemoryBox<UserInfoData>('userInfo', onWrite: _pushTo);
     GStorage.localCache = MemoryBox<dynamic>('localCache', onWrite: _pushTo);
     GStorage.setting = MemoryBox<dynamic>('setting', onWrite: _pushTo);

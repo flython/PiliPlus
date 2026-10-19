@@ -115,6 +115,14 @@ macOS 上把**视频列表（主窗口）**与**播放页（播放窗口）**拆
 6. 播放窗口里点视频页头部的「返回主页」= `Get.until(isFirst)` = 回到哨兵页
    = 关掉整个窗口（`header_control.dart:1757`）。这是既有语义，
    本次没有改它；新增的左上角悬浮返回按钮才是「返回上一层」。
+7. 左上角悬浮返回按钮的 `Stack` 挂在 SmartDialog 的 overlay **之上**
+   （`FlutterSmartDialog.init` 的 `builder` 包在 SmartDialog 外面），
+   播放窗口弹对话框时它会浮在遮罩上。该 fork 没有公开的对话框激活标志，
+   没有强行绕开 —— 「有返回入口」比「不压住对话框」重要得多。
+8. 「播放页独立窗口」开关只在**主窗口**「设置 → 桌面」里会连带关掉播放窗口。
+   在播放窗口的视频页头部关掉它，只改后续入口；已经开着的播放窗口继续播，
+   视频也继续送它（一个进程只能有一个 media_kit `Player`），
+   直到用户自己关窗。
 
 ## 8. 验证状态
 
@@ -376,3 +384,65 @@ media-kit-85f0a69e…/media_kit_video/common/darwin/Classes/plugin/MPVVideoOutPa
 26. `openRoute` 里复用分支的 `show()` 若抛 `CHANNEL_UNREGISTERED`
     （窗口在这中间被用户关掉）会掉进销毁分支，把一个好好的窗口拆掉。
     派发与 `show()` 分离，`show()` 单独 `try`。
+
+### 8.8 第四轮「修复本身有没有引入新问题」评审
+
+评审范围 `9aea6df1b..8b285909e`，专门盯第二轮修复本身。
+
+**阻断级**
+
+27. **`_fetchDone` 闸门永远打不开，「等快照」的修复等于没修，而且比修之前更慢。**
+    `_fetchDone` 只在 `openBoxes()`（由 `GStorage.init()` 调，`main.dart:111`）
+    里创建，但 `fetchSnapshot()` 由 `PlaybackBridge.init()` 调
+    （`main.dart:106` → `playback_bridge.dart:68`）**先**执行
+    ⇒ `fetchSnapshot` 末尾那句 `complete()` 看到的是 null，是死代码；
+    随后 `openBoxes` 造出一个再也没人 complete 的 Completer
+    ⇒ 任何 `throwIfSnapshotMissing()` 都停在 `await _fetchDone.future` 上
+    ⇒ 主引擎那次点击要卡满重试预算才报错。
+    两处都改成 `_fetchDone ??= Completer<void>()`。
+28. **总预算不是「次数 × 单次上界」。** `_kDispatchAttempts = 20` 配单次 5s
+    timeout，实际是 ≈104s 的「点了没反应」。改成 Stopwatch 卡 10s 总预算，
+    单次上限 3s 且不越过总预算。
+
+**严重级**
+
+29. **在播放窗口里关掉「播放页独立窗口」开关 ⇒ 同进程两个 `Player`。**
+    `onChanged` 里的 `if (WindowEnv.isMain)` 在播放引擎里是空操作（关窗逻辑
+    在播放引擎里够不着），而 `Pref` 的写会经 `_applyWrite` **立刻**落到主引擎
+    真实 Hive ⇒ 主引擎从此开始建第二个 `Player`，抢 media_kit 进程级端口。
+    根因是把「要不要走播放窗口」等同于「开关状态」。改成
+    `PlaybackWindow.useSeparateWindow => Pref.playbackSeparateWindow || isOpen`：
+    **只要播放窗口还开着，视频就必须继续走它**，与开关无关。
+    想收回窗口去主窗口「设置 → 桌面」拨，那里才会真正关窗。
+30. **已有窗口的派发失败被静默吃掉。** `catch (_)` 拆窗之后没有 rethrow，
+    调用方以为成功，既不回退主窗口也不弹提示，用户点的视频凭空没了。
+    与 `openRoute` 自己的文档矛盾。
+
+**一般级**
+
+31. `extra_settings.dart:63` 缺 `WindowEnv.isMain` 守卫（今天 `/setting` 在播放
+    窗口不可达）。由 29 的改动一并解决：`onSeparateWindowChanged` 在播放引擎里
+    本来就是空操作，且 `useSeparateWindow` 现在不再依赖开关。
+32. 返回按钮的 `Stack` 在 SmartDialog overlay **之上**
+    （`FlutterSmartDialog.init` 的 `builder` 包在 SmartDialog 外面），
+    弹对话框时左上角会浮着它。`flutter_smart_dialog` 这个 fork 没有公开的
+    「当前有没有对话框」标志（只有 `DialogProxy.instance.contextCustom`
+    这类恒非空的 context）。没有强行绕开，见 §7 新增的第 7 条。
+33. `playback_bridge.dart` 关于 `previousRoute == null` 的注释与 GetX
+    `offNamed`（`pushReplacementNamed`，只换栈顶）的语义相反；
+    `playback/view.dart` 里「返回主页 → `Get.until(isFirst)`」也是错的（代码是
+    `Get.back`）。两处注释都改正。
+34. `main.dart` 里 `CacheManager.ensureInitialized()` 上方的注释还留着
+    「两个实例会互相踩」的警告，而守卫已经去掉了。改成陈述事实。
+
+**查过确认不是问题**
+
+`toPlaybackMediaNamed` 与 `toLiveRoom` 的 `off:true` 分支都显式传了
+`preventDuplicates: false`（上一轮那条「连点推荐无反应」确实修好了）；
+`PlPlayerController.instance?.dispose()` 替掉 `updatePlayCount()` 方向正确；
+`gallery_viewer` 早退后各路径都有 null 判断；`MainFlutterWindow.swift` 的落位
+算法与 `closingToken` 自摘顺序都对；播放窗口里 `WindowCloseRequestedEvent`
+直接 break 不 cancel 是对的（关窗由 `willClose → windowClosing` 接管）。
+
+**待查实**（不影响上述结论）：`nativeapi` 的 macOS 实现与
+`cached_network_image_ce` 的源码都不在 pub 缓存里，无法取证。

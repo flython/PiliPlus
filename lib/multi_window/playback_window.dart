@@ -48,8 +48,7 @@ class PlaybackWindow {
   ///
   /// 开关关掉后想收回播放窗口，去主窗口「设置 → 桌面」拨，那里才会调
   /// [onSeparateWindowChanged] 真正关窗。
-  bool get useSeparateWindow =>
-      Pref.playbackSeparateWindow || isOpen;
+  bool get useSeparateWindow => Pref.playbackSeparateWindow || isOpen;
 
   /// 在主引擎启动时调用一次：注册窗口关闭通知 + 存储镜像的对端方法。
   ///
@@ -63,7 +62,12 @@ class PlaybackWindow {
         // 带 windowId 是必须的：窗口被拆过一轮之后（比如派发失败重建），
         // 旧窗口的 willClose 通知会迟到。没有 id 就只能无条件清句柄，
         // 那条迟到通知会把新窗口的句柄一起清掉，于是再点视频又开第三个窗。
-        if (call.arguments == self.windowId || call.arguments == null) {
+        //
+        // 注意：`self` 是主引擎自己的 windowId，不是子窗口的。这里要跟
+        // **当前正在用的**子窗口句柄比，不是跟主窗口比。上一个版本写成
+        // `self.windowId` 是错的主键比对，永远匹配不上，句柄清不掉，
+        // 用户表现为「关掉一次就再也点不开」。
+        if (call.arguments == _controller?.windowId || call.arguments == null) {
           _controller = null;
           // 同 [close]：用户点红点走的就是这条通路，必须一样自增 generation，
           // 否则正在重试的派发会对着已销毁的窗口空转满 12 秒，然后被
@@ -97,21 +101,28 @@ class PlaybackWindow {
           off: off,
           generation: _generation,
         );
+        await _showSafely(existing);
+        return;
       } on _WindowClosed {
         // 用户自己把窗口关了：本来就该停在这儿，不回退、不报错
         return;
-      } catch (_) {
-        // 窗口可能刚被关掉。必须连窗一起拆：只把句柄丢掉的话，屏幕上会留一个
-        // 主引擎再也关不掉的孤儿播放窗口，而下一次点视频会开出第二个。
+      } catch (e) {
+        debugPrint('播放窗口句柄已失效($e)，拆掉重建');
+        // 复用失败绝大多数只有一个原因：这个窗口已经没了。
         //
-        // 拆完要 rethrow：派发失败 ≠ 用户关窗。吞掉的话调用方以为成功，
-        // 既不回退主窗口也不弹提示，用户点的那个视频就凭空没了。
-        if (identical(_controller, existing)) _controller = null;
+        // 消息是播放引擎临死前发的，engine 一掉就发不出去，所以主引擎攥着的
+        // 句柄经常是个死窗口（真机复现：关掉播放窗口后连点 8 次视频，每次都是
+        // `failed to find target window`，而整轮日志里只建过 1 个窗口）。
+        //
+        // 这里不能像新建路径那样 rethrow：用户点视频的心愿是「能看到这个视频」，
+        // 他没要求任何窗口的存活。拆掉旧的接着往下走新建流程，比弹一个
+        // 「播放窗口打不开」然后什么都不发生要像样得多。
+        if (identical(_controller, existing)) {
+          _controller = null;
+          _generation++;
+        }
         await _destroyQuietly(existing);
-        rethrow;
       }
-      await _showSafely(existing);
-      return;
     }
 
     late final WindowController controller;
@@ -204,7 +215,8 @@ class PlaybackWindow {
       if (generation != _generation) {
         throw const _WindowClosed();
       }
-      final remaining = _kDispatchBudget.inMilliseconds - budget.elapsedMilliseconds;
+      final remaining =
+          _kDispatchBudget.inMilliseconds - budget.elapsedMilliseconds;
       if (remaining <= 0) {
         debugPrint('播放窗口派发超时: $last');
         throw StateError('播放窗口启动超时');

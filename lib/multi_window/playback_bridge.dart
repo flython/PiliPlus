@@ -107,9 +107,20 @@ class PlaybackBridge {
 
   Future<void> _handleNativeMethod(MethodCall call) async {
     if (call.method == 'windowClosing' && !_closing) {
-      // 原生标题栏被关掉：通知主引擎丢弃句柄，并保证播放器已经停
+      // 先通知主引擎，再拆东西，顺序不能反。
+      //
+      // `willClose` 一过 NSWindow 随即销毁，engine 跟着掉；之后任何 `await`
+      // 的续体都不保证还能跑。原先把通知放在 `_stopEverything()` 后面，而
+      // `_stopEverything()` 里要 `await StorageMirror.settle()`（最长 800ms）
+      // —— 真机上就复现了：窗口关掉后 `dispose player` 打出来了，主引擎却
+      // 一直攥着已死的 windowId，之后点任何视频都是
+      // `failed to find target window`，用户表现为「关掉之后就再也点不开了」。
+      try {
+        await _main?.invokeMethod<void>(kWindowClosedMethod, _selfWindowId);
+      } catch (e) {
+        debugPrint('通知主引擎 windowClosed 失败: $e');
+      }
       await _stopEverything();
-      await _main?.invokeMethod<void>(kWindowClosedMethod, _selfWindowId);
     }
   }
 
@@ -165,7 +176,11 @@ class PlaybackBridge {
     } catch (e) {
       debugPrint('关闭播放窗口失败: $e');
     }
-    await _main?.invokeMethod<void>(kWindowClosedMethod, _selfWindowId);
+    try {
+      await _main?.invokeMethod<void>(kWindowClosedMethod, _selfWindowId);
+    } catch (e) {
+      debugPrint('通知主引擎 windowClosed 失败: $e');
+    }
   }
 
   /// 关闭前把播放引擎独占的东西全部释放，否则 mpv 会继续出声。

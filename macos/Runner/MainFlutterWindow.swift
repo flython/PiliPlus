@@ -105,10 +105,22 @@ private final class SubWindowGeometryWatcher {
       NSWindow.didEndLiveResizeNotification,
       NSWindow.willCloseNotification,
     ]
-    tokens[key] = names.map { name in
+    let added = names.map { name in
       NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { _ in
         SubWindowGeometry.save(kind, from: window)
+        if name == NSWindow.willCloseNotification {
+          // 观察者必须随窗口一起注销：闭包强引用 window，
+          // 否则每开关一次播放窗口/弹幕窗口就永久留下一个已关的 NSWindow。
+          SubWindowGeometryWatcher.shared.release(key: key)
+        }
       }
+    }
+    tokens[key] = added
+  }
+
+  func release(key: ObjectIdentifier) {
+    for token in tokens.removeValue(forKey: key) ?? [] {
+      NotificationCenter.default.removeObserver(token)
     }
   }
 }

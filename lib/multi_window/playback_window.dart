@@ -40,11 +40,16 @@ class PlaybackWindow {
     final self = await WindowController.fromCurrentEngine();
     await self.setWindowMethodHandler((call) {
       if (call.method == kWindowClosedMethod) {
-        _controller = null;
-        // 同 [close]：用户点红点走的就是这条通路，必须一样自增 generation，
-        // 否则正在重试的派发会对着已销毁的窗口空转满 12 秒，然后被
-        // page_utils 当成「开不了窗」回退到主窗口再开一次。
-        _generation++;
+        // 带 windowId 是必须的：窗口被拆过一轮之后（比如派发失败重建），
+        // 旧窗口的 willClose 通知会迟到。没有 id 就只能无条件清句柄，
+        // 那条迟到通知会把新窗口的句柄一起清掉，于是再点视频又开第三个窗。
+        if (call.arguments == self.windowId || call.arguments == null) {
+          _controller = null;
+          // 同 [close]：用户点红点走的就是这条通路，必须一样自增 generation，
+          // 否则正在重试的派发会对着已销毁的窗口空转满 12 秒，然后被
+          // page_utils 当成「开不了窗」回退到主窗口再开一次。
+          _generation++;
+        }
       }
       return StorageMirror.onMainCall(call);
     });
@@ -72,11 +77,6 @@ class PlaybackWindow {
           off: off,
           generation: _generation,
         );
-        // 已经存在的窗口同样要置前 + 聚焦。播放窗口是另一个 NSWindow，
-        // 不 orderFront 它就停在原层序 —— 用户在主窗口点第二个视频时
-        // 主窗口纹丝不动，看起来像没点上。
-        await existing.show();
-        return;
       } on _WindowClosed {
         return;
       } catch (_) {
@@ -85,6 +85,9 @@ class PlaybackWindow {
         if (identical(_controller, existing)) _controller = null;
         await _destroyQuietly(existing);
       }
+      if (_controller != existing) return;
+      await _showSafely(existing);
+      return;
     }
 
     late final WindowController controller;
@@ -108,7 +111,21 @@ class PlaybackWindow {
       await _destroyQuietly(controller);
       rethrow;
     }
-    await controller.show();
+    await _showSafely(controller);
+  }
+
+  /// 已经存在的播放窗口同样要置前 + 聚焦。播放窗口是另一个 NSWindow，
+  /// 不 orderFront 它就停在原层序 —— 用户在主窗口点第二个视频时
+  /// 主窗口纹丝不动，看起来像没点上。
+  ///
+  /// 放前面失败会抛 `WindowChannelException(CHANNEL_UNREGISTERED)`
+  /// （窗口在这中间被用户关掉了）。派发已经成功，不该因此报「打不开」。
+  Future<void> _showSafely(WindowController controller) async {
+    try {
+      await controller.show();
+    } catch (e) {
+      debugPrint('显示播放窗口失败: $e');
+    }
   }
 
   /// 建窗时先 `hiddenAtLaunch`，等页面真的派发进去了再显示 ——
@@ -140,6 +157,12 @@ class PlaybackWindow {
 
   /// 把消息送进播放窗口。新引擎首帧前调用会抛 MissingPluginException，
   /// 所以按 `DanmakuForwarder` 同款策略重试到成功为止。
+  ///
+  /// 每次 `invokeMethod` 都要自带 `.timeout`：它是对端 `await handler.call()`
+  /// 的往返，对端卡住不回（比如 `_appReady` 那次 post-frame 没跑到）时，
+  /// future 永远不会 complete，`Future.delayed` 只在 catch 分支里，
+  /// 「20 次 × 200ms」这个上界对「不回复」根本不成立 —— 主窗口会被永久
+  /// 挂死，连 `.catchError` 的 toast 都出不来，之后每次点视频重复挂死。
   Future<void> _dispatch(
     WindowController controller,
     String route,
@@ -147,15 +170,17 @@ class PlaybackWindow {
     required bool off,
     required int generation,
   }) async {
-    for (var i = 0; i < 20; i++) {
+    for (var i = 0; i < _kDispatchAttempts; i++) {
       if (generation != _generation) {
         throw const _WindowClosed();
       }
       try {
-        await controller.invokeMethod<void>(
-          kOpenVideoMethod,
-          {'route': route, 'arguments': arguments, 'off': off},
-        );
+        await controller
+            .invokeMethod<void>(
+              kOpenVideoMethod,
+              {'route': route, 'arguments': arguments, 'off': off},
+            )
+            .timeout(_kDispatchTimeout);
         return;
       } catch (e) {
         if (i == _kDispatchAttempts - 1) {
@@ -202,9 +227,7 @@ class PlaybackWindow {
     // teardown 超时会让 close 永远不执行：mpv 继续出声，而主引擎已经
     // 把句柄置空了，下一次点视频会开出第二个播放窗口。
     try {
-      await controller
-          .invokeMethod<void>('close')
-          .timeout(_kCloseTimeout);
+      await controller.invokeMethod<void>('close').timeout(_kCloseTimeout);
     } catch (e) {
       debugPrint('关闭播放窗口失败: $e');
     }
@@ -217,6 +240,10 @@ class PlaybackWindow {
   /// 剩下的等待（存储快照）已经改成在播放引擎内部 await，不再占用这里的预算。
   /// 用户在这段时间里既没有 spinner 也没有任何提示，拖得越久越像是点了没反应。
   static const _kDispatchAttempts = 20;
+
+  /// 单次派发往返的上限。对端要等 `markAppReady()`（首帧 post-frame）才回包，
+  /// 冷启动深链时可能超过两秒；再久就当它卡死了，重试下一轮。
+  static const _kDispatchTimeout = Duration(seconds: 5);
 }
 
 /// 播放窗口在派发途中被关掉了 —— 用户点红点，或播放引擎自己退了。

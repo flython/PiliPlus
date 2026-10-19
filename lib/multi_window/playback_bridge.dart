@@ -48,6 +48,10 @@ class PlaybackBridge {
   /// （见 `PlaybackBackButton`）—— 没有可观察对象，Navigator 不会通知外面。
   static final ValueNotifier<int> routeTick = ValueNotifier(0);
 
+  /// 自己的 windowId。关窗通知要带上它：主引擎可能已经拆过一轮窗口，
+  /// 不带 id 的话旧窗口那条迟到的通知会误伤新窗口的句柄。
+  static String? _selfWindowId;
+
   /// 在 `main.dart` 的子窗口分流处调用。
   ///
   /// [mainWindowId] 来自 `WindowConfiguration.arguments`，由主引擎建窗时写入。
@@ -55,6 +59,7 @@ class PlaybackBridge {
   Future<void> init(String mainWindowId, String windowType) async {
     _appReady = Completer<void>();
     final self = await WindowController.fromCurrentEngine();
+    _selfWindowId = self.windowId;
     _main = WindowController.fromWindowId(mainWindowId);
     await self.setWindowMethodHandler(_handleWindowMethod);
 
@@ -103,7 +108,7 @@ class PlaybackBridge {
     if (call.method == 'windowClosing' && !_closing) {
       // 原生标题栏被关掉：通知主引擎丢弃句柄，并保证播放器已经停
       await _stopEverything();
-      await _main?.invokeMethod<void>(kWindowClosedMethod);
+      await _main?.invokeMethod<void>(kWindowClosedMethod, _selfWindowId);
     }
   }
 
@@ -159,7 +164,7 @@ class PlaybackBridge {
     } catch (e) {
       debugPrint('关闭播放窗口失败: $e');
     }
-    await _main?.invokeMethod<void>(kWindowClosedMethod);
+    await _main?.invokeMethod<void>(kWindowClosedMethod, _selfWindowId);
   }
 
   /// 关闭前把播放引擎独占的东西全部释放，否则 mpv 会继续出声。
@@ -176,6 +181,10 @@ class PlaybackBridge {
     // 计数会 > 1，只减计数会让底下那个视频的播放器留在原地不出声，
     // 用户下次打开同一个视频看到的服务端进度是旧的。
     PlPlayerController.instance?.dispose();
+    // dispose 会写播放进度。这些写是 fire-and-forget 的转发，下一步就是
+    // 关原生窗、engine 随之销毁 —— 不等它们落地，用户看到的就是
+    // 「关掉播放窗口后进度没记上」。
+    await StorageMirror.settle();
   }
 }
 

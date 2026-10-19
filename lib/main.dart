@@ -12,6 +12,7 @@ import 'package:PiliPlus/models/common/theme/theme_color_type.dart';
 import 'package:PiliPlus/multi_window/playback_bridge.dart';
 import 'package:PiliPlus/multi_window/playback_window.dart';
 import 'package:PiliPlus/multi_window/sub_window.dart';
+import 'package:PiliPlus/multi_window/storage_mirror.dart';
 import 'package:PiliPlus/multi_window/window_env.dart';
 import 'package:PiliPlus/pages/download/download/controller.dart';
 import 'package:PiliPlus/pages/playback/view.dart';
@@ -234,8 +235,9 @@ Future<void> main(List<String> args) async {
         switch (WidgetsBinding.instance.schedulerPhase) {
           case .idle || .postFrameCallbacks:
             WidgetsBinding.instance.scheduleFrameCallback(show);
-          case .transientCallbacks || .midFrameMicrotasks ||
-                .persistentCallbacks:
+          case .transientCallbacks ||
+              .midFrameMicrotasks ||
+              .persistentCallbacks:
             WidgetsBinding.instance.addPostFrameCallback(show);
         }
       }
@@ -247,6 +249,10 @@ Future<void> main(List<String> args) async {
       // window_controller.dart 里所有会写主窗口偏好、或者会
       // compact/close Hive 再退出 app 的分支都加了 WindowEnv.isMain 守卫。
       WindowController.instance.init();
+      // 存储镜像是启动那一刻取的快照。用户切回播放窗口时补拉一次，
+      // 否则主窗口在这期间切账号 / 改设置 / 退出登录全都传不进来 ——
+      // 最刺眼的是点赞记到旧账号。
+      WindowController.instance.onWindowFocus = StorageMirror.refresh;
       final window = WindowManager.instance.getCurrent();
       if (window != null) {
         window

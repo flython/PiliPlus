@@ -527,7 +527,12 @@ abstract final class PageUtils {
   /// 留得住上一页 —— 那两个页面不是媒体页，按替换处理就回不去了。
   static void toPlaybackMediaNamed(String route, dynamic arguments) {
     if (_mediaRoutes.contains(Get.currentRoute)) {
-      Get.offNamed<void>(route, arguments: arguments);
+      // preventDuplicates 必须显式关掉：GetX 在 `extension_navigation.dart:149`
+      // 是 `if (preventDuplicates && page == currentRoute) return null`，默认
+      // true 的意思是「往当前这一页替换回当前这一页直接短路」。那就变成
+      // 播放窗口里点相关推荐的下一个视频毫无反应。同文件 `toDupNamed` 早就
+      // 显式传了这个参数。
+      Get.offNamed<void>(route, arguments: arguments, preventDuplicates: false);
     } else {
       Get.toNamed<void>(route, arguments: arguments);
     }
@@ -544,7 +549,7 @@ abstract final class PageUtils {
       // off: true 是「退出直播」（live_room/view.dart:647），必须原样替换掉；
       // 否则按「栈顶是不是媒体页」判断，见 toPlaybackMediaNamed。
       if (off) {
-        Get.offNamed('/liveRoom', arguments: roomId);
+        Get.offNamed('/liveRoom', arguments: roomId, preventDuplicates: false);
       } else {
         toPlaybackMediaNamed('/liveRoom', roomId);
       }

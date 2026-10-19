@@ -36,6 +36,10 @@ class WindowController {
   late bool pauseOnMinimize = Pref.pauseOnMinimize;
   late bool isPlaying = false;
 
+  /// 窗口拿到焦点时回调（每次 focus 都会调，不只是首次）。
+  /// 播放窗口用它补拉存储镜像，见 `_windowListener` 的 `WindowFocusedEvent`。
+  void Function()? onWindowFocus;
+
   void init() {
     assert(_window == null);
 
@@ -51,6 +55,11 @@ class WindowController {
       case WindowFocusedEvent():
         // https://github.com/leanflutter/window_manager/issues/571
         _setOpacityOnWindows(1.0);
+        // 播放窗口的存储镜像是启动那一刻的快照（见 storage_mirror.dart），
+        // 主窗口切账号、改设置、退出登录它都看不见。这里是唯一可靠的
+        // 补拉时机：macOS 上点同 app 的另一个窗口不会触发
+        // didBecomeActive，AppLifecycleState 也不会变。
+        onWindowFocus?.call();
         break;
       case WindowBlurredEvent():
         break;

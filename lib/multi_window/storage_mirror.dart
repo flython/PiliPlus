@@ -200,6 +200,11 @@ abstract final class StorageMirror {
       debugPrint('[storageMirror] 还没拿到主引擎句柄，丢弃 $box 的写');
       return;
     }
+    // 还没被主引擎确认的写。刷新快照时要在灌回去，否则「刚写完立刻切窗口」
+    // 会被新快照冲掉。
+    final unconfirmed = _unconfirmed.putIfAbsent(box, () => {});
+    unconfirmed[key] = value;
+    _inFlight++;
     try {
       unawaited(
         main
@@ -207,15 +212,76 @@ abstract final class StorageMirror {
               'box': box,
               'bytes': encodeEntry(key, value),
             })
+            .then((_) {
+              // 只在值没被更新的情况下摘掉，避免连带撤掉更新的那一次写
+              if (identical(unconfirmed[key], value)) unconfirmed.remove(key);
+            })
             // 这一步失败 = 播放引擎的这一次写入彻底丢了（设置 / 观看进度 /
             // 登录态都在这条路上）。原来吞掉不记，用户下次启动会发现数据
             // 凭空消失，而日志里一行都没有 —— 排查成本最高的单点。
             .catchError(
               (Object e) => debugPrint('[storageMirror] 写 $box 失败: $e'),
-            ),
+            )
+            .whenComplete(() => _inFlight--),
       );
     } catch (e) {
+      _inFlight--;
       debugPrint('[storageMirror] 编码 $box 的写入失败: $e');
     }
+  }
+
+  static final Map<String, Map<dynamic, dynamic>> _unconfirmed = {};
+  static int _inFlight = 0;
+
+  /// 等在途的写回落到主引擎，最多等 [timeout]。
+  ///
+  /// 关窗必须过这道栅栏：`dispose()` 会写播放进度，紧接着就
+  /// `invokeMethod('close')` 把原生窗关掉，那之后播放引擎的 engine 就没了，
+  /// 没发出去的写全部作废 —— 用户看到的就是「关掉窗口后进度没记上」。
+  static Future<void> settle({
+    Duration timeout = const Duration(milliseconds: 800),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+    while (_inFlight > 0 && DateTime.now().isBefore(deadline)) {
+      await Future.delayed(const Duration(milliseconds: 20));
+    }
+    if (_inFlight > 0) {
+      debugPrint('[storageMirror] 还有 $_inFlight 次写没落到主引擎就关窗了');
+    }
+  }
+
+  /// 从主引擎重拉一次快照，灌回内存箱。
+  ///
+  /// 镜像是启动那一刻取的，之后主引擎切账号 / 改设置 / 退出登录，
+  /// 播放窗口全都看不见：点赞记到旧账号是最刺眼的一个。反向也坏 ——
+  /// 过期快照上的 `MemoryBox.clear()` 会按本地键逐个转发 delete，
+  /// 把主窗口已经删掉或改过的键再删一遍。
+  ///
+  /// 由播放窗口的 `WindowFocusedEvent` 触发（`WindowController.onWindowFocus`）。
+  static Future<void> refresh() async {
+    final main = _main;
+    if (main == null || !snapshotReady) return;
+    Map<dynamic, dynamic>? raw;
+    for (var i = 0; i < 3; i++) {
+      try {
+        raw = await main.invokeMethod<Map<dynamic, dynamic>>(
+          kStorageSnapshotMethod,
+        );
+        break;
+      } catch (e) {
+        debugPrint('[storageMirror] 补拉快照失败($i): $e');
+        await Future.delayed(const Duration(milliseconds: 200));
+      }
+    }
+    if (raw == null) return;
+    for (final entry in _unconfirmed.entries) {
+      raw.putIfAbsent(entry.key, () => entry.value);
+    }
+    _snapshot = raw.map((key, value) => MapEntry('$key', value as Uint8List));
+    for (final entry in _snapshot.entries) {
+      _fill(entry.key, entry.value);
+    }
+    // accountMode 是另一个纯内存副本，刷新箱不够，得让 Accounts 自己再算一遍
+    unawaited(Accounts.refresh());
   }
 }

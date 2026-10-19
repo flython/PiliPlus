@@ -4,6 +4,7 @@ import 'dart:math' show min;
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/foundation.dart';
 
+import 'package:PiliPlus/multi_window/playback_args.dart';
 import 'package:PiliPlus/multi_window/storage_mirror.dart';
 import 'package:PiliPlus/multi_window/window_env.dart';
 import 'package:PiliPlus/utils/storage_pref.dart';
@@ -212,7 +213,11 @@ class PlaybackWindow {
         await controller
             .invokeMethod<void>(
               kOpenVideoMethod,
-              {'route': route, 'arguments': arguments, 'off': off},
+              {
+                'route': route,
+                'arguments': encodePlaybackArguments(arguments),
+                'off': off,
+              },
             )
             .timeout(
               Duration(

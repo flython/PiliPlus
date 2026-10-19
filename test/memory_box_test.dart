@@ -2,6 +2,9 @@
 // `GStorage` 那一串 widget 依赖，而 `text_ellipsis`/`text_more` 两个 widget
 // 在 Flutter 3.47.x 上编译不过（`RenderParagraph.textPainter` 已被改成私有
 // `_textPainter`，与本次改动无关）。
+import 'package:PiliPlus/models/common/video/source_type.dart';
+import 'package:PiliPlus/models/common/video/video_type.dart';
+import 'package:PiliPlus/multi_window/playback_args.dart';
 import 'package:PiliPlus/multi_window/window_env.dart';
 import 'package:PiliPlus/utils/hive_codec.dart';
 import 'package:PiliPlus/utils/memory_box.dart';
@@ -11,9 +14,12 @@ void main() {
   group('MemoryBox', () {
     test('读回刚写进去的值，不走 onWrite 回环', () {
       final writes = <String>[];
-      final box = MemoryBox<String>('setting', onWrite: (b, k, v) {
-        writes.add('$b/$k=$v');
-      })..put('k', 'v');
+      final box = MemoryBox<String>(
+        'setting',
+        onWrite: (b, k, v) {
+          writes.add('$b/$k=$v');
+        },
+      )..put('k', 'v');
 
       expect(box.get('k'), 'v');
       expect(writes, ['setting/k=v']);
@@ -21,11 +27,15 @@ void main() {
 
     test('删除会转发 null', () {
       final writes = <String>[];
-      final box = MemoryBox<String>('setting', onWrite: (b, k, v) {
-        writes.add('$b/$k=$v');
-      })
-        ..put('k', 'v')
-        ..delete('k');
+      final box =
+          MemoryBox<String>(
+              'setting',
+              onWrite: (b, k, v) {
+                writes.add('$b/$k=$v');
+              },
+            )
+            ..put('k', 'v')
+            ..delete('k');
 
       expect(box.get('k'), isNull);
       expect(writes.last, 'setting/k=null');
@@ -33,9 +43,12 @@ void main() {
 
     test('applySnapshot 灌入的值不会被当成写入', () {
       final writes = <String>[];
-      final box = MemoryBox<String>('setting', onWrite: (b, k, v) {
-        writes.add('$b/$k=$v');
-      })..applySnapshot({'a': '1', 'b': '2'});
+      final box = MemoryBox<String>(
+        'setting',
+        onWrite: (b, k, v) {
+          writes.add('$b/$k=$v');
+        },
+      )..applySnapshot({'a': '1', 'b': '2'});
 
       expect(box.toMap(), {'a': '1', 'b': '2'});
       expect(writes, isEmpty);
@@ -65,11 +78,15 @@ void main() {
     // 下次启动快照一灌就「复活」，用户以为清掉的搜索历史又回来了。
     test('clear 会把每个 key 以 null 转发出去', () async {
       final writes = <String>[];
-      final box = MemoryBox<String>('historyWord', onWrite: (b, k, v) {
-        writes.add('$b/$k=$v');
-      })
-        ..put('a', '1')
-        ..put('b', '2');
+      final box =
+          MemoryBox<String>(
+              'historyWord',
+              onWrite: (b, k, v) {
+                writes.add('$b/$k=$v');
+              },
+            )
+            ..put('a', '1')
+            ..put('b', '2');
       writes.clear();
 
       await box.clear();
@@ -142,6 +159,67 @@ void main() {
       expect(isPlaybackWindowArguments(''), isFalse);
       expect(isPlaybackWindowArguments('{"type":"danmaku"}'), isFalse);
       expect(isPlaybackWindowArguments(null), isFalse);
+    });
+  });
+
+  group('播放参数过平台通道', () {
+    // 真实事故：StandardMessageCodec 只认 bool/double/int/String/
+    // Uint8List/List/Map，enum 过去就抛
+    // `Invalid argument: Instance of 'VideoType'`，
+    // 而 toVideoPage 的 arguments 必然带 videoType
+    // ⇒ 播放窗口第一次打开就派发失败，冒「播放窗口打不开」。
+    test('enum 编成 name 能在对端原样还原', () {
+      final decoded = decodePlaybackArguments(
+        encodePlaybackArguments({
+          'videoType': VideoType.pgc,
+          'sourceType': SourceType.watchLater,
+        }),
+      );
+
+      expect(decoded['videoType'], VideoType.pgc);
+      expect(decoded['sourceType'], SourceType.watchLater);
+    });
+
+    test('编出来的 Map 全是 codec 认的类型', () {
+      final encoded = encodePlaybackArguments({
+        'videoType': VideoType.ugc,
+        'bvid': 'BV1xx',
+        'cid': 123,
+        'isVertical': false,
+        'title': null,
+      });
+
+      for (final v in encoded.values) {
+        expect(
+          v == null ||
+              v is bool ||
+              v is num ||
+              v is String ||
+              v is List ||
+              v is Map,
+          isTrue,
+          reason: '${v.runtimeType} 过不了平台通道',
+        );
+      }
+    });
+
+    test('codec 传不了的值当场报错并点名是哪个键', () {
+      expect(
+        () => encodePlaybackArguments({'weird': Object()}),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.message,
+            'message',
+            contains('weird'),
+          ),
+        ),
+      );
+    });
+
+    test('enum 用 name 而不是 index：重排后仍取到同一个值', () {
+      final encoded = encodePlaybackArguments({'videoType': VideoType.pgc});
+
+      expect(encoded['videoType'], 'pgc');
     });
   });
 }

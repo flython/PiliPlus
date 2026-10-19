@@ -8,6 +8,7 @@ import 'package:get/get.dart';
 import 'package:PiliPlus/pages/playback/view.dart';
 import 'package:PiliPlus/plugin/pl_player/controller.dart';
 import 'package:PiliPlus/multi_window/danmaku_forwarder.dart';
+import 'package:PiliPlus/multi_window/playback_args.dart';
 import 'package:PiliPlus/multi_window/playback_window.dart';
 import 'package:PiliPlus/multi_window/storage_mirror.dart';
 import 'package:PiliPlus/utils/page_utils.dart';
@@ -88,7 +89,7 @@ class PlaybackBridge {
         await StorageMirror.throwIfSnapshotMissing();
         final request = _OpenRequest(
           args['route'] as String,
-          args['arguments'],
+          decodePlaybackArguments(args['arguments'] as Map?),
           args['off'] as bool? ?? false,
         );
         // 必须等首帧才回包：窗口是 hiddenAtLaunch 建的，主引擎拿到应答就

@@ -300,7 +300,13 @@ abstract final class StorageMirror {
     for (final entry in _snapshot.entries) {
       _fill(entry.key, entry.value);
     }
-    // accountMode 是另一个纯内存副本，刷新箱不够，得让 Accounts 自己再算一遍
-    unawaited(Accounts.refresh());
+    // accountMode 是 Accounts 里的另一份纯内存副本，刷新箱不够，得自己重算。
+    // 特意不走 Accounts.refresh()：它末尾会对每个未激活账号发一次
+    // Request.buvidActive，窗口每获得一次焦点就发一轮网络请求，不划算。
+    for (final a in Accounts.account.values) {
+      for (final t in a.type) {
+        Accounts.accountMode[t.index] = a;
+      }
+    }
   }
 }

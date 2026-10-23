@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:PiliPlus/models/common/video/source_type.dart';
 import 'package:PiliPlus/models/common/video/video_type.dart';
 
@@ -20,7 +22,29 @@ final _argumentEnums = <String, List<Enum>>{
 ///
 /// 用 `name` 而不是 `index` 编码：枚举重排后 `index` 会静默取到另一个值，
 /// `firstWhere` 是当场报错。
-Map<String, dynamic> encodePlaybackArguments(Map<dynamic, dynamic> args) {
+/// 播放窗口的路由参数。视频页传的是 `Map`（`PageUtils.toVideoPage`），
+/// 直播页传的是裸 `int roomId`（`PageUtils.toLiveRoom`），所以签名收 `dynamic`。
+///
+/// 之前签名写死 `Map<dynamic, dynamic>`，直播的裸 int 会在调用点当场抛
+/// `type 'int' is not a subtype of type 'Map<dynamic, dynamic>'`，主引擎把
+/// 每次点击重试满 10s 预算后报「播放窗口打不开」—— 直播页在播放窗口里
+/// 从来没打开过。
+dynamic encodePlaybackArguments(dynamic args) {
+  // 非 Map（直播的 roomId）走平台通道的 StandardMessageCodec 原生支持：
+  // bool/int/double/String/List/Uint8List/Map 都能过，原样返回即可。
+  if (args is! Map) {
+    if (args != null &&
+        args is! bool &&
+        args is! num &&
+        args is! String &&
+        args is! List &&
+        args is! Uint8List) {
+      throw ArgumentError(
+        '播放窗口没法通过平台通道传 arguments（类型 ${args.runtimeType}）',
+      );
+    }
+    return args;
+  }
   final out = <String, dynamic>{};
   for (final entry in args.entries) {
     final key = '${entry.key}';
@@ -46,8 +70,9 @@ Map<String, dynamic> encodePlaybackArguments(Map<dynamic, dynamic> args) {
 }
 
 /// [encodePlaybackArguments] 的逆运算。
-Map<dynamic, dynamic> decodePlaybackArguments(Map<dynamic, dynamic>? raw) {
-  final out = <dynamic, dynamic>{...?raw};
+dynamic decodePlaybackArguments(dynamic raw) {
+  if (raw is! Map) return raw;
+  final out = <dynamic, dynamic>{...raw};
   for (final entry in _argumentEnums.entries) {
     final name = out[entry.key];
     if (name is String) {

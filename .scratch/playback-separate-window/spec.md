@@ -11,7 +11,7 @@ macOS 上把**视频列表（主窗口）**与**播放页（播放窗口）**拆
 
 | # | 决策 |
 |---|---|
-| R1 | 播放窗口是「视频专用窗」：跑完整 GetX 路由表（能开 UP 页 / 番剧 / 评论 / 网页），**不渲染底部 Tab 导航栏**；有返回按钮 + 原生标题栏 |
+| R1 | 播放窗口是「视频专用窗」：跑完整 GetX 路由表（能开 UP 页 / 番剧 / 评论 / 网页），**不渲染底部 Tab 导航栏**；**不挂常驻返回按钮**（返回靠 Esc / 标题栏关闭），有原生标题栏 |
 | R2 | 全局最多一个播放窗口。播放窗口内再点视频 = 原地替换（沿用 `toVideoPage` 的 `off` 语义），不新开窗 |
 | R3 | macOS **默认开启**。开关两处：`设置 → 桌面`「播放页独立窗口」+ 播放页头部（与弹幕分离开关同位置）。关掉完全退回今天的行为 |
 | R4 | UGC / PGC / 番剧 / 收藏 / 稍后再看 / 历史 / 动态里的视频全部进播放窗口（共用 `PageUtils.toVideoPage` 单点收口） |
@@ -113,12 +113,12 @@ macOS 上把**视频列表（主窗口）**与**播放页（播放窗口）**拆
 5. 两 engine 都注册 `audio_service`；只有有 Player 的那个会更新 Now Playing
    与媒体键。
 6. 播放窗口里点视频页头部的「返回主页」= `Get.until(isFirst)` = 回到哨兵页
-   = 关掉整个窗口（`header_control.dart:1757`）。这是既有语义，
-   本次没有改它；新增的左上角悬浮返回按钮才是「返回上一层」。
-7. 左上角悬浮返回按钮的 `Stack` 挂在 SmartDialog 的 overlay **之上**
-   （`FlutterSmartDialog.init` 的 `builder` 包在 SmartDialog 外面），
-   播放窗口弹对话框时它会浮在遮罩上。该 fork 没有公开的对话框激活标志，
-   没有强行绕开 —— 「有返回入口」比「不压住对话框」重要得多。
+   = 关掉整个窗口（`header_control.dart:1757`）。这是既有语义，本次没有改它。
+7. 播放窗口**不再有悬浮返回按钮**（用户决策：常驻的返回键挡画面）。
+   返回上一层的入口只剩：Esc（`main.dart` 的 `BackDetector` → `_onBack`
+   → `Get.back`）、原生标题栏关闭键（关窗即停止播放）。
+   代价是「播放窗口里点进 UP 页 / 评论页后返回」没有可见按钮；
+   `_onBack` 在栈可 pop 时就是 `navigator.pop()`，键盘可达。
 8. 「播放页独立窗口」开关只在**主窗口**「设置 → 桌面」里会连带关掉播放窗口。
    在播放窗口的视频页头部关掉它，只改后续入口；已经开着的播放窗口继续播，
    视频也继续送它（一个进程只能有一个 media_kit `Player`），
@@ -296,8 +296,9 @@ media-kit-85f0a69e…/media_kit_video/common/darwin/Classes/plugin/MPVVideoOutPa
 12. **播放窗口里没有可见的返回入口**：桌面端视频页 `appBar` 恒为 null，
     移动端那个带返回的 `_buildOverlayToolBar` 不渲染，
     原生标题栏又留白（`setTitle` 全仓无 Dart 调用点）。
-    新增 `PlaybackBackButton`（由 `PlaybackBridge.routeTick` 驱动显隐），
-    `_openVideo` 里按视频标题调原生 `setTitle`。
+    曾新增 `PlaybackBackButton`（由 `PlaybackBridge.routeTick` 驱动显隐）；
+    **该按钮已被根除**，见 §7 第 7 条。`_openVideo` 里按视频标题调原生
+    `setTitle` 保留。
 13. 播放窗口复用句柄派发失败时**只丢句柄不拆窗** ⇒ 屏幕上留一个主引擎
     再也关不掉的孤儿窗口，下次点视频开出第二个。改为连窗一起
     `_destroyQuietly`。
@@ -423,11 +424,9 @@ media-kit-85f0a69e…/media_kit_video/common/darwin/Classes/plugin/MPVVideoOutPa
 31. `extra_settings.dart:63` 缺 `WindowEnv.isMain` 守卫（今天 `/setting` 在播放
     窗口不可达）。由 29 的改动一并解决：`onSeparateWindowChanged` 在播放引擎里
     本来就是空操作，且 `useSeparateWindow` 现在不再依赖开关。
-32. 返回按钮的 `Stack` 在 SmartDialog overlay **之上**
-    （`FlutterSmartDialog.init` 的 `builder` 包在 SmartDialog 外面），
-    弹对话框时左上角会浮着它。`flutter_smart_dialog` 这个 fork 没有公开的
-    「当前有没有对话框」标志（只有 `DialogProxy.instance.contextCustom`
-    这类恒非空的 context）。没有强行绕开，见 §7 新增的第 7 条。
+32. ~~返回按钮的 `Stack` 在 SmartDialog overlay **之上**~~ —— 已过时：
+    用户要求去掉常驻返回键，`PlaybackBackButton` 连同 `main.dart` 里的
+    `Stack` 挂载点一起删除了，这个问题不复存在，见 §7 第 7 条。
 33. `playback_bridge.dart` 关于 `previousRoute == null` 的注释与 GetX
     `offNamed`（`pushReplacementNamed`，只换栈顶）的语义相反；
     `playback/view.dart` 里「返回主页 → `Get.until(isFirst)`」也是错的（代码是
@@ -446,3 +445,55 @@ media-kit-85f0a69e…/media_kit_video/common/darwin/Classes/plugin/MPVVideoOutPa
 
 **待查实**（不影响上述结论）：`nativeapi` 的 macOS 实现与
 `cached_network_image_ce` 的源码都不在 pub 缓存里，无法取证。
+
+### 8.9 macOS Debug 包真的打出来了（此前 §8.2 的结论已被推翻）
+
+§8.2 写的「本环境跑不通」是**当时结论下的过早判断**：当时只试了
+`flutter build macos --debug` 的裸跑，失败就归因为「media_kit_video pod 缺
+`media_kit_libs_macos_video`」，并没有往下追。实际上那只是**第一层**故障。
+用户要求打包试跑后逐层剥开，共 5 层，前 4 层全是仓库/环境既有断裂：
+
+1. **mpv 头文件缺失**（媒体层）
+   `media_kit_video/macos/Headers/mpv/*.h` 缺失 ⇒
+   `MPVVideoOutParams.swift:23 cannot find type 'mpv_node_list' in scope`、
+   `TextureSW.swift:48 cannot find 'MPV_RENDER_API_TYPE_SW' in scope`。
+   podspec 用 `system("make -C ../common/darwin …")` 从 github 下 mpv v0.36.0，
+   本机无 github.com 连通性 ⇒ 从另一个已带 v0.36.0 头文件的 pub-cache
+   checkout 拷进实际解析到的 checkout，再 `pod install`（需
+   `export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8`，否则 CocoaPods 在含中文的
+   路径下报 `Unicode Normalize not appropriate for ASCII-8BIT`）。
+
+2. **Flutter SDK 必须用打过仓库补丁的 3.47.3**（不是 `.fvmrc` 里的 3.47.7）
+   `lib/scripts/*.patch` 是给 SDK 打的，而 `lib/scripts/patch.ps1` 是
+   PowerShell（CI 用），**本机从来没执行过**。3.47.3 已有 18 个补丁打上，
+   但漏了 `double_tap_gesture.patch` ⇒
+   `image_double_tap_gesture_recognizer.dart:16 Superclass has no method named 'checkUp'`。
+   另外 `pubspec.yaml:24` 钉的 `flutter: 3.47.7` 恰好是删掉了公开
+   `TextPainter get textPainter` 的那一版（3.47.2/3.47.3/3.47.5 的
+   `rendering/paragraph.dart:393` 都还有，3.47.7 只剩私有的 `_textPainter`），
+   ⇒ 仓库钉的 SDK 编译不过自己的代码。
+
+3. **pub-cache 里的 `material_ui` 也必须打补丁**（最大的坑）
+   `material_ui` 是 Flutter material 的 **vendored fork**（不是转导出），
+   仓库代码 `import 'package:material_ui/material_ui.dart'` 拿的是它自己的
+   `lib/src/*.dart`。`StandardBottomSheet` / `BottomSheetState<T>` /
+   `BottomSheetDefaultsM3` 全是 `lib/scripts/material/scaffold.patch` 加的
+   **公开 typedef**（`+typedef BottomSheetState<T extends BottomSheet> = …`），
+   未打补丁的 material_ui 里这三个名字根本不存在 ⇒
+   `bottom_sheet.dart` 15 个 `undefined_class` / `extends_non_class`。
+   按 `patch.ps1` 的 macOS 分支给 `~/.pub-cache/hosted/pub.dev/material_ui-1.6.0`
+   打上 8 个补丁（modal_barrier_material / navigation_drawer / popup_menu /
+   fab / text_field / scaffold / refresh_indicator / tabs）后全清。
+
+4. **两处本分支自己的编译错**（已提交 `9db753a88`）
+   - `gallery_viewer.dart:516`：`Image(...)` 被同目录 `image.dart` 的同名类
+     （Flutter Image 的 fork，额外要 8 个必填参数含 `minScale`）截胡 ⇒
+     `Required named parameter 'minScale' must be provided`。这是我自己上一轮
+     改出来的，用回同文件注释里本来就在用的 `CachedNetworkImage`。
+   - `MainFlutterWindow.swift:212`：`closingToken` 捕获后又被赋值 ⇒
+     Swift 6 并发警告。改成 `ObserverTokenBox` 引用类型过一层。
+
+结果：`✓ Built build/macos/Build/Products/Debug/PiliPlus.app`，
+本分支的 Swift 代码零警告；adhoc 签名（`com.example.piliplus`）；
+`codesign -v` 通过；装在 `/Applications/PiliPlus-debug.app`；
+冒烟测试启动存活 18s、无崩溃报告。

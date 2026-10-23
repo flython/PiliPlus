@@ -80,7 +80,9 @@ class PlaybackWindow {
   }
 
   /// 打开（或替换）播放窗口里的视频页。
-  Future<void> open(Map arguments, {bool off = false}) =>
+  /// 视频页的 arguments 是 `Map`。直播页走 [openRoute] 传裸 `int roomId`
+  /// （见 `PageUtils.toLiveRoom`），所以不能把这里收窄成 `Map`。
+  Future<void> open(dynamic arguments, {bool off = false}) =>
       openRoute('/videoV', arguments, off: off);
 
   /// 让播放窗口跳到 [route]。主窗口的所有播放入口都收敛到这里。

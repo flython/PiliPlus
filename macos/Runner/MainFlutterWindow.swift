@@ -24,6 +24,90 @@ private enum SubWindowKind: String {
   }
 }
 
+/// 播放窗口的全屏。两种模式，别混：
+/// - 系统全屏：NSWindow.toggleFullScreen:，独占一个 Space
+/// - 应用内全屏（右键菜单）：把窗口铺满本屏，留在当前 Space，和主窗口行为一致
+///
+/// 为什么必须从原生侧发起：
+/// Dart 侧用 FFI 改窗口属性会崩。nativeapi 的事件派发是同步的
+/// （cnativeapi/src/platform/macos/window_manager_macos.mm:652
+///   DispatchWindowEvent → Emit → listener->Invoke），AppKit 改
+/// styleMask / frame 时会同步发出 windowDidResize，而此刻 Dart 还没从
+/// FFI 调用返回，通知就回跳进了 Dart 回调，Dart VM 断言
+/// "Cannot invoke native callback from a leaf call."
+/// （runtime_entry.cc:5233）然后 abort。
+/// 从 method channel 里发起时 Dart 栈已经退干净，通知落在事件循环里，
+/// 不会命中那条断言。
+///
+/// 状态按窗口记，不按类记：多个播放窗口可以同时存在，而 static 的
+/// restoreFrame 会让后开的窗口继承前一个的还原框。
+private final class PlaybackFullScreenState {
+  var restoreFrame: NSRect?
+}
+
+private enum PlaybackFullScreen {
+  private static var states: [ObjectIdentifier: PlaybackFullScreenState] = [:]
+
+  static func state(for window: NSWindow) -> PlaybackFullScreenState {
+    let key = ObjectIdentifier(window)
+    if let s = states[key] { return s }
+    let s = PlaybackFullScreenState()
+    states[key] = s
+    return s
+  }
+
+  static func set(_ enter: Bool, inApp: Bool, on window: NSWindow) {
+    if inApp {
+      applyInApp(enter, on: window)
+      return
+    }
+    // 已经在目标状态就别再 toggle，否则会把用户需要的那个状态反掉
+    if window.styleMask.contains(.fullScreen) == enter { return }
+    window.toggleFullScreen(nil)
+  }
+
+  /// 应用内全屏：只把窗口拉到本屏那么大，不动 styleMask（改 styleMask
+  /// 会连带改 frame，触发同一批同步通知）。
+  ///
+  /// restoreFrame 为空时的退出一律按「已经铺过屏」处理，把窗口收回 800x600
+  /// 的默认尺寸并居中，而不是什么都不做。窗口开机就落在 1512x944（几何记忆
+  /// 或用户上次没退出），第一次右键进、第二次右键退时 restoreFrame 是 nil，
+  /// 静默失败会让用户彻底失去退出手段。
+  private static func applyInApp(_ enter: Bool, on window: NSWindow) {
+    let state = state(for: window)
+    if enter {
+      guard state.restoreFrame == nil else { return }
+      state.restoreFrame = window.frame
+      if let screen = window.screen {
+        window.setFrame(screen.visibleFrame, display: true)
+      }
+    } else {
+      if let restore = state.restoreFrame {
+        state.restoreFrame = nil
+        window.setFrame(restore, display: true)
+      } else {
+        // 兜底：没有可还原的 frame，退回默认尺寸居中。
+        let visible = window.screen?.visibleFrame ?? window.frame
+        let w = min(SubWindowKind.playback.defaultSize.width, visible.width)
+        let h = min(SubWindowKind.playback.defaultSize.height, visible.height)
+        let frame = NSRect(
+          x: visible.midX - w / 2, y: visible.midY - h / 2, width: w, height: h)
+        window.setFrame(frame, display: true)
+      }
+    }
+  }
+
+  /// 窗口关闭时清掉，避免下一个播放窗口继承上一个的原 frame。
+  static func reset(for window: NSWindow) {
+    states.removeValue(forKey: ObjectIdentifier(window))
+  }
+
+  /// 供几何持久化判断：铺屏态下「铺满屏幕」的尺寸不该被记成窗口记忆位置。
+  static func isInAppFullScreen(_ window: NSWindow) -> Bool {
+    states[ObjectIdentifier(window)]?.restoreFrame != nil
+  }
+}
+
 /// 子窗口几何持久化：移动/缩放/关闭时记录 frame（屏坐标，点）。
 /// 存 UserDefaults（Hive 是 Dart 侧存储，原生窗口事件无法可靠写回）。
 /// 恢复时校验记忆位置所在显示器；已不存在则落到默认位置，
@@ -132,7 +216,11 @@ private final class SubWindowGeometryWatcher {
     ]
     let added = names.map { name in
       NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { _ in
-        SubWindowGeometry.save(kind, from: window)
+        // 铺屏态下别把「铺满屏幕」这个尺寸存成记忆位置：下次开播放窗口会直接
+        // 落成全屏尺寸，而且 SubWindowGeometry.apply 找不到屏幕会落默认位。
+        if !PlaybackFullScreen.isInAppFullScreen(window) {
+          SubWindowGeometry.save(kind, from: window)
+        }
         if name == NSWindow.willCloseNotification {
           // 观察者必须随窗口一起注销：闭包强引用 window，
           // 否则每开关一次播放窗口/弹幕窗口就永久留下一个已关的 NSWindow。
@@ -156,10 +244,13 @@ private final class SubWindowGeometryWatcher {
 /// 的局部 var（Swift 6 并发检查直接判错），所以过一层引用类型。
 private final class ObserverTokenBox {
   fileprivate var token: NSObjectProtocol?
+  fileprivate var tokens: [NSObjectProtocol] = []
 
   fileprivate func remove() {
     if let token { NotificationCenter.default.removeObserver(token) }
     token = nil
+    for t in tokens { NotificationCenter.default.removeObserver(t) }
+    tokens = []
   }
 }
 
@@ -228,8 +319,47 @@ class MainFlutterWindow: NSWindow {
                 forName: NSWindow.willCloseNotification, object: window, queue: .main
               ) { _ in
                 closingBox.remove()
+                PlaybackFullScreen.reset(for: window)
                 channel.invokeMethod("windowClosing", arguments: nil)
               }
+
+              // 用户可能按 Esc / 绿灯键 / 系统手势退出全屏，Dart 侧要跟着变。
+              // 这些 observer 必须一起放进 closingBox：block 式
+              // addObserver(forName:object:queue:usingBlock:) 被
+              // NotificationCenter 强引用，且 block 捕获了 channel（进而
+              // 是 engine），窗口关闭并不会自动摘掉 —— 每开关一次播放窗口
+              // 就永久漏一个 block + 一个引擎的引用。
+              // didResize 必须接：铺屏走 setFrame，不发 didExitFullScreen，
+              // 少了它 Dart 侧的镜像会卡在 true，下一次右键被幂等判断吃掉。
+              let fsEnterToken = NotificationCenter.default.addObserver(
+                forName: NSWindow.didEnterFullScreenNotification, object: window,
+                queue: .main
+              ) { _ in
+                channel.invokeMethod("fullScreenChanged", arguments: true)
+              }
+              let fsExitToken = NotificationCenter.default.addObserver(
+                forName: NSWindow.didExitFullScreenNotification, object: window,
+                queue: .main
+              ) { _ in
+                channel.invokeMethod("fullScreenChanged", arguments: false)
+              }
+              let fsResizeToken = NotificationCenter.default.addObserver(
+                forName: NSWindow.didResizeNotification, object: window,
+                queue: .main
+              ) { _ in
+                // 铺屏走 setFrame，不发 didEnter/didExitFullScreen，只发
+                // didResize —— 少了这里 Dart 侧的镜像会卡在 true，下一次
+                // 右键被幂等判断吃掉。
+                // 只在铺屏态才报：系统全屏的 resize 由 didEnter/didExit
+                // 覆盖，这里再报会跟 exit 撞车（185 行那次 true 就是撞出来的），
+                // 把刚退出的状态又打回全屏，之后右键全失效。
+                if PlaybackFullScreen.isInAppFullScreen(window) {
+                  channel.invokeMethod(
+                    "fullScreenChanged",
+                    arguments: window.styleMask.contains(.fullScreen))
+                }
+              }
+              closingBox.tokens += [fsEnterToken, fsExitToken, fsResizeToken]
             }
           }
           result(nil)
@@ -237,6 +367,19 @@ class MainFlutterWindow: NSWindow {
         case "setTitle":
           if let title = args["title"] as? String {
             viewController.view.window?.title = title
+          }
+          result(nil)
+
+        case "togglePlaybackFullScreen":
+          // 必须在原生侧改窗口状态，不能从 Dart 用 FFI 改：
+          // AppKit 改窗口几何会同步发通知，通知回跳进 Dart 时 Dart 还在
+          // FFI 叶子调用里，VM 断言直接 abort（详见 PlaybackFullScreen 注释）。
+          // 缺 key / 拼错时默认「退出」，不是「进入」：误进全屏会把用户
+          // 从窗口态强行拽走，误退则只是一次空操作。
+          let enter = args["enter"] as? Bool ?? false
+          let inApp = args["inApp"] as? Bool ?? false
+          withWindow { window in
+            PlaybackFullScreen.set(enter, inApp: inApp, on: window)
           }
           result(nil)
 

@@ -232,6 +232,11 @@ Future<void> main(List<String> args) async {
           ..isVisibleInTaskbar = true
           ..title = Constants.appName;
         if (Pref.isWindowMaximized) window.maximize();
+        // 用户用 macOS 绿灯键 / ⌃⌘F 进的全屏，Dart 侧不发 triggerFullScreen，
+        // 播放器界面会以为还在窗口模式（AppBar、控件都按窗口版式排）。
+        // 注意这里不能再碰 window.isFullScreen：回调正是它自己触发的。
+        WindowController.instance.onFullScreenChanged = (isFullScreen) =>
+            syncFullScreenFromWindow(isFullScreen: isFullScreen);
         void show([_]) => window
           ..focus()
           ..show();
@@ -400,10 +405,6 @@ class MyApp extends StatelessWidget {
         onBack: _onBack,
         child: child,
       );
-    }
-    if (WindowEnv.isPlayback) {
-      // 播放窗口需要一个可见的返回入口，桌面端视频页本身没有
-      child = Stack(children: [child, const PlaybackBackButton()]);
     }
     return child;
   }

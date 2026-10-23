@@ -1461,6 +1461,10 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
     updateSubtitleStyle();
   }
 
+  /// 系统那边（绿灯键 / ⌃⌘F）改了全屏状态时补同步进来，
+  /// 见 pl_player/utils/fullscreen.dart 的 syncFullScreenFromWindow。
+  void setFullScreenState(bool val) => _setFullScreen(val);
+
   double screenRatio = 0.0;
   bool isManualFS = true;
   late final FullScreenMode mode = Pref.fullScreenMode;
@@ -1533,7 +1537,7 @@ class PlPlayerController with BlockConfigMixin, AudioNormalizationMixin {
           }
           await resetScreenRotation();
         } else {
-          exitDesktopFullScreen();
+          exitDesktopFullScreen(inAppFullScreen: inAppFullScreen);
         }
       }
     } finally {

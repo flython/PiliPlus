@@ -7,6 +7,7 @@ import 'package:get/get.dart';
 
 import 'package:PiliPlus/pages/playback/view.dart';
 import 'package:PiliPlus/plugin/pl_player/controller.dart';
+import 'package:PiliPlus/plugin/pl_player/utils/fullscreen.dart';
 import 'package:PiliPlus/multi_window/danmaku_forwarder.dart';
 import 'package:PiliPlus/multi_window/playback_args.dart';
 import 'package:PiliPlus/multi_window/playback_window.dart';
@@ -44,10 +45,6 @@ class PlaybackBridge {
   bool _openedOnce = false;
 
   bool get openedOnce => _openedOnce;
-
-  /// 路由栈深度变化时自增。播放窗口的悬浮返回按钮靠它决定要不要亮着
-  /// （见 `PlaybackBackButton`）—— 没有可观察对象，Navigator 不会通知外面。
-  static final ValueNotifier<int> routeTick = ValueNotifier(0);
 
   /// 自己的 windowId。关窗通知要带上它：主引擎可能已经拆过一轮窗口，
   /// 不带 id 的话旧窗口那条迟到的通知会误伤新窗口的句柄。
@@ -89,7 +86,8 @@ class PlaybackBridge {
         await StorageMirror.throwIfSnapshotMissing();
         final request = _OpenRequest(
           args['route'] as String,
-          decodePlaybackArguments(args['arguments'] as Map?),
+          // 直播页的 arguments 是裸 int roomId，不能 as Map?
+          decodePlaybackArguments(args['arguments']),
           args['off'] as bool? ?? false,
         );
         // 必须等首帧才回包：窗口是 hiddenAtLaunch 建的，主引擎拿到应答就
@@ -121,6 +119,20 @@ class PlaybackBridge {
         debugPrint('通知主引擎 windowClosed 失败: $e');
       }
       await _stopEverything();
+    }
+    // 用户按 Esc、点绿灯或系统手势退出全屏时，Dart 侧的 isFullScreen 得跟着变，
+    // 否则播放器版式还停在全屏。同步调用：nativeapi 的事件派发是同步的，
+    // 这里再 await 一次通道只会把通知回跳推向 Dart 叶子调用（见 fullscreen.dart）。
+    if (call.method == 'fullScreenChanged') {
+      final enter = call.arguments as bool? ?? false;
+      // 铺屏态下 setFrame 会发 didResize，这里也会收到 fullScreenChanged(false)，
+      // 但那不是用户退出了全屏 —— 不能拿它改播放器界面，否则刚铺上屏就把
+      // 控件打回窗口模式。只有系统全屏那两半（didEnter/didExitFullScreen）
+      // 才需要推给 Dart；铺屏由 Dart 自己发起的调用维护。
+      if (!isPlaybackInAppFullScreen) {
+        PlPlayerController.instance?.setFullScreenState(enter);
+      }
+      syncPlaybackFullScreenFlag(enter);
     }
   }
 
@@ -219,16 +231,7 @@ class PlaybackRouteObserver extends NavigatorObserver {
             previousRoute.settings.name == PlaybackRootPage.routeName)) {
       unawaited(PlaybackBridge.i.closeWindow());
     }
-    _tick();
   }
-
-  @override
-  void didPush(Route route, Route? previousRoute) => _tick();
-
-  @override
-  void didReplace({Route? newRoute, Route? oldRoute}) => _tick();
-
-  void _tick() => PlaybackBridge.routeTick.value++;
 }
 
 class _OpenRequest {

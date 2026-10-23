@@ -40,6 +40,10 @@ class WindowController {
   /// 播放窗口用它补拉存储镜像，见 `_windowListener` 的 `WindowFocusedEvent`。
   void Function()? onWindowFocus;
 
+  /// 窗口全屏状态变化。只可能在主窗口上发生：播放窗口的全屏是铺满屏幕，
+  /// 不走 NSWindow.toggleFullScreen，见 pl_player/utils/fullscreen.dart。
+  void Function(bool isFullScreen)? onFullScreenChanged;
+
   void init() {
     assert(_window == null);
 
@@ -52,6 +56,15 @@ class WindowController {
 
   void _windowListener(WindowEvent event) {
     switch (event) {
+      case WindowEnteredFullScreenEvent():
+        // 用户用系统绿灯键 / ⌃⌘F 进的全屏，AppKit 不会通知 Dart。
+        // 不补这一句，pl_player 那个 _isDesktopFullScreen 会和真实状态错位：
+        // 之后点全屏按钮先被判成「已经在全屏」，直接 return 掉。
+        onFullScreenChanged?.call(true);
+        break;
+      case WindowExitedFullScreenEvent():
+        onFullScreenChanged?.call(false);
+        break;
       case WindowFocusedEvent():
         // https://github.com/leanflutter/window_manager/issues/571
         _setOpacityOnWindows(1.0);
@@ -84,10 +97,6 @@ class WindowController {
       case WindowCreatedEvent():
         break;
       case WindowClosedEvent():
-        break;
-      case WindowEnteredFullScreenEvent():
-        break;
-      case WindowExitedFullScreenEvent():
         break;
       case WindowCloseRequestedEvent():
         // 播放窗口也跑这套监听器，但它只是众多窗口之一：cancel 会让红点

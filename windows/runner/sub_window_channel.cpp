@@ -38,12 +38,10 @@ void OnSubWindowCreated(void* flutter_view_controller) {
   if (view == nullptr) {
     return;
   }
-  auto registrar_ref =
-      controller->engine()->GetRegistrarForPlugin("PiliPlusSubWindowChannel");
-  if (registrar_ref == nullptr) {
-    return;
-  }
-  auto messenger = FlutterDesktopPluginRegistrarGetMessenger(registrar_ref);
+  // engine 的 messenger 直接就是 flutter::BinaryMessenger*，生命周期跟随
+  // 子 engine。不能走 FlutterDesktopPluginRegistrarGetMessenger：它返回 C ABI
+  // 的不完整类型 FlutterDesktopMessengerRef，MethodChannel 构造函数不收。
+  auto* messenger = controller->engine()->messenger();
   if (messenger == nullptr) {
     return;
   }

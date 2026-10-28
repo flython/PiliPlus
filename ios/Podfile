@@ -1,5 +1,5 @@
 # Uncomment this line to define a global platform for your project
-platform :ios, '14.0'
+platform :ios, '15.0'
 
 # CocoaPods analytics sends network stats synchronously affecting flutter build latency.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
@@ -98,5 +98,9 @@ post_install do |installer|
 
         end
         # End of the permission_handler configuration
+
+    # shared_preferences_foundation 2.6.0 ships generated messages.g.swift with
+    # Swift 6.1 trailing-comma argument syntax. We patched those commas out of the
+    # pub-cache source, so no per-pod Swift version bump is needed here.
   end
 end

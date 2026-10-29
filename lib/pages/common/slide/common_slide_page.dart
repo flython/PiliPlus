@@ -2,7 +2,8 @@ import 'dart:math' show max;
 
 import 'package:PiliPlus/common/widgets/gesture/horizontal_drag_gesture_recognizer.dart';
 import 'package:PiliPlus/utils/storage_pref.dart';
-import 'package:flutter/gestures.dart' show HorizontalDragGestureRecognizer;
+import 'package:flutter/gestures.dart'
+    show HorizontalDragGestureRecognizer, DeviceGestureSettings;
 import 'package:get/get.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -21,7 +22,6 @@ mixin CommonSlideMixin<T extends CommonSlidePage> on State<T>, TickerProvider {
   late final bool enableSlide;
   late final AnimationController _animController;
   SlideDragGestureRecognizer? _slideDragGestureRecognizer;
-
   static bool slideDismissReplyPage = Pref.slideDismissReplyPage;
 
   bool isDxAllowed(double dx) {
@@ -33,6 +33,14 @@ mixin CommonSlideMixin<T extends CommonSlidePage> on State<T>, TickerProvider {
 
   TabBarDragGestureRecognizer horizontalDragGestureRecognizer() {
     return TabBarDragGestureRecognizer(isDxAllowed: isDxAllowed);
+  }
+
+  late ThemeData theme;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    theme = Theme.of(context);
   }
 
   @override
@@ -75,7 +83,6 @@ mixin CommonSlideMixin<T extends CommonSlidePage> on State<T>, TickerProvider {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     if (enableSlide) {
       return LayoutBuilder(
         builder: (context, constraints) {
@@ -89,17 +96,17 @@ mixin CommonSlideMixin<T extends CommonSlidePage> on State<T>, TickerProvider {
                 child: child,
               );
             },
-            child: buildPage(theme),
+            child: buildPage(),
           );
         },
       );
     }
-    return buildPage(theme);
+    return buildPage();
   }
 
-  Widget buildPage(ThemeData theme);
+  Widget buildPage();
 
-  Widget buildList(ThemeData theme) => throw UnimplementedError();
+  Widget buildList() => throw UnimplementedError();
 
   void _onDragEnd([_]) {
     if (_downDx == null) return;
@@ -123,9 +130,9 @@ mixin CommonSlideMixin<T extends CommonSlidePage> on State<T>, TickerProvider {
     _animController.value = max(0, _isRTL ? from - to : to - from) / _maxWidth;
   }
 
-  Widget slideList(ThemeData theme) => Listener(
+  Widget slideList() => Listener(
     onPointerDown: (event) => _slideDragGestureRecognizer?.addPointer(event),
-    child: buildList(theme),
+    child: buildList(),
   );
 }
 
@@ -145,6 +152,10 @@ class SlideDragGestureRecognizer extends HorizontalDragGestureRecognizer {
   bool isPointerAllowed(PointerEvent event) {
     return isDxAllowed(event.localPosition.dx) && super.isPointerAllowed(event);
   }
+
+  @override
+  DeviceGestureSettings get gestureSettings =>
+      const DeviceGestureSettings(touchSlop: 5.0);
 }
 
 class TabBarDragGestureRecognizer

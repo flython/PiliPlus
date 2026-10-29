@@ -149,7 +149,7 @@ Future<void> main(List<String> args) async {
         ),
       );
     }
-  } else if (Platform.isMacOS) {
+  } else if (Platform.isMacOS || Platform.isLinux) {
     await setupServiceLocator();
   }
 

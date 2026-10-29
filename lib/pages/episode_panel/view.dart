@@ -30,7 +30,6 @@ import 'package:PiliPlus/utils/extension/num_ext.dart';
 import 'package:PiliPlus/utils/extension/scroll_controller_ext.dart';
 import 'package:PiliPlus/utils/id_utils.dart';
 import 'package:PiliPlus/utils/platform_utils.dart';
-import 'package:PiliPlus/utils/storage_pref.dart';
 import 'package:PiliPlus/utils/utils.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter_smart_dialog/flutter_smart_dialog.dart';
@@ -210,13 +209,13 @@ class _EpisodePanelState extends State<EpisodePanel>
       widget.type == EpisodeType.season && widget.list.length > 1;
 
   @override
-  Widget buildPage(ThemeData theme) {
+  Widget buildPage() {
     return Material(
       color: showTitle ? theme.colorScheme.surface : null,
       type: showTitle ? MaterialType.canvas : MaterialType.transparency,
       child: Column(
         children: [
-          _buildToolbar(theme),
+          _buildToolbar(),
           if (_isMulti)
             TabBar(
               controller: _tabController,
@@ -226,14 +225,14 @@ class _EpisodePanelState extends State<EpisodePanel>
               dividerHeight: 1,
               dividerColor: theme.dividerColor.withValues(alpha: 0.1),
             ),
-          Expanded(child: enableSlide ? slideList(theme) : buildList(theme)),
+          Expanded(child: enableSlide ? slideList() : buildList()),
         ],
       ),
     );
   }
 
   @override
-  Widget buildList(ThemeData theme) {
+  Widget buildList() {
     if (_isMulti) {
       return TabBarView(
         controller: _tabController,
@@ -242,14 +241,13 @@ class _EpisodePanelState extends State<EpisodePanel>
         children: List.generate(
           widget.list.length,
           (index) => _buildBody(
-            theme,
             index,
             widget.list[index].episodes,
           ),
         ),
       );
     }
-    return _buildBody(theme, 0, _getCurrEpisodes);
+    return _buildBody(0, _getCurrEpisodes);
   }
 
   double _calcItemOffset(int index) {
@@ -273,7 +271,6 @@ class _EpisodePanelState extends State<EpisodePanel>
   }
 
   Widget _buildBody(
-    ThemeData theme,
     int tabIndex,
     List<ugc.BaseEpisodeItem> episodes,
   ) {
@@ -298,7 +295,6 @@ class _EpisodePanelState extends State<EpisodePanel>
                           ? index == _currentItemIndex
                           : false;
                       Widget episodeItem = _buildEpisodeItem(
-                        theme: theme,
                         episode: episode,
                         index: index,
                         length: episodes.length,
@@ -344,7 +340,6 @@ class _EpisodePanelState extends State<EpisodePanel>
                           ? index == _currentItemIndex
                           : false;
                       return _buildEpisodeItem(
-                        theme: theme,
                         episode: episode,
                         index: index,
                         length: episodes.length,
@@ -359,9 +354,8 @@ class _EpisodePanelState extends State<EpisodePanel>
     );
   }
 
-  late final int? vipStatus = Pref.userInfoCache?.vipStatus;
+  late final _isVip = Accounts.isVideoVip;
   Widget _buildEpisodeItem({
-    required ThemeData theme,
     required ugc.BaseEpisodeItem episode,
     required int index,
     required int length,
@@ -433,9 +427,7 @@ class _EpisodePanelState extends State<EpisodePanel>
           child: InkWell(
             onTap: () {
               if (isCurrentIndex) return;
-              if (episode.badge == "会员" &&
-                  Accounts.mainEqVideo &&
-                  vipStatus != 1) {
+              if (episode.badge == "会员" && !_isVip) {
                 SmartDialog.showToast('需要大会员');
                 // return;
               }
@@ -644,7 +636,7 @@ class _EpisodePanelState extends State<EpisodePanel>
     );
   }
 
-  Widget _buildToolbar(ThemeData theme) => Container(
+  Widget _buildToolbar() => Container(
     height: 45,
     padding: EdgeInsets.symmetric(horizontal: showTitle ? 14 : 6),
     decoration: BoxDecoration(
